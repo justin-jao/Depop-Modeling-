@@ -1,77 +1,57 @@
-// --- LUXURY BRAND SVG LOGOS ---
-// All paths are drawn to fit nicely in a 100x100 viewBox.
-// Since we use mix-blend-mode: difference, the SVG fills are white, appearing inverted on light sections.
-const BRAND_LOGOS = {
-    chanel: {
-        name: "Chanel",
+// --- CLOTHING ITEM SVG CURSORS (UNTRADEMARKED) ---
+// All paths fit in a 100x100 viewBox.
+// Since we use mix-blend-mode: difference, the SVG fills/strokes are white (inverting on sections).
+const CLOTHING_ITEMS = {
+    hanger: {
+        name: "Hanger",
         svgPath: `
-            <!-- Interlocking Double C -->
-            <!-- Left C -->
-            <path d="M 45,50 C 45,38.9 36.1,30 25,30 C 13.9,30 5,38.9 5,50 C 5,61.1 13.9,70 25,70 C 36.1,70 45,61.1 45,50 M 35,50 C 35,55.5 30.5,60 25,60 C 19.5,60 15,55.5 15,50 C 15,44.5 19.5,40 25,40 C 30.5,40 35,44.5 35,50 Z" fill-rule="evenodd" />
-            <!-- Right C -->
-            <path d="M 95,50 C 95,38.9 86.1,30 75,30 C 63.9,30 55,38.9 55,50 C 55,61.1 63.9,70 75,70 C 86.1,70 95,61.1 95,50 M 85,50 C 85,55.5 80.5,60 75,60 C 69.5,60 65,55.5 65,50 C 65,44.5 69.5,40 75,40 C 80.5,40 85,44.5 85,50 Z" fill-rule="evenodd" />
+            <!-- Clothing Hanger -->
+            <path d="M 50,18 C 55,18 58,22 58,26 C 58,31 54,33 50,36 L 50,44 M 50,44 L 85,63 C 87,64 85,67 82,67 H 18 C 15,67 13,64 15,63 Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
         `
     },
-    hermes: {
-        name: "Hermès",
+    tshirt: {
+        name: "T-Shirt",
         svgPath: `
-            <!-- Minimalistic Serif H & Carriage Concept -->
-            <!-- Outer Ring -->
-            <circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="2" />
-            <!-- Center H -->
-            <path d="M 32,25 L 42,25 M 37,25 L 37,75 M 32,75 L 42,75 
-                     M 58,25 L 68,25 M 63,25 L 63,75 M 58,75 L 68,75 
-                     M 37,50 L 63,50" stroke="currentColor" stroke-width="4" stroke-linecap="square" fill="none" />
+            <!-- Flat-lay T-Shirt -->
+            <path d="M 34,22 C 40,26 45,26 50,26 C 55,26 60,26 66,22 L 82,32 C 84,33 84,36 82,38 L 76,44 C 74,46 72,45 72,42 L 72,75 C 72,78 69,80 66,80 H 34 C 31,80 28,78 28,75 L 28,42 C 28,45 26,46 24,44 L 18,38 C 16,36 16,33 18,32 Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
         `
     },
-    gucci: {
-        name: "Gucci",
+    dress: {
+        name: "Dress",
         svgPath: `
-            <!-- Interlocking G Monogram -->
-            <!-- Left G -->
-            <path d="M 45,50 C 45,39 36,30 25,30 C 14,30 5,39 5,50 C 5,61 14,70 25,70 C 36,70 45,61 45,50 M 35,50 C 35,55.5 30.5,60 25,60 C 19.5,60 15,55.5 15,50 C 15,44.5 19.5,40 25,40 C 30.5,40 35,44.5 35,50 Z" fill-rule="evenodd" />
-            <!-- Right G (Inverted) -->
-            <path d="M 95,50 C 95,39 86,30 75,30 C 64,30 55,39 55,50 C 55,61 64,70 75,70 C 86,70 95,61 95,50 M 85,50 C 85,55.5 80.5,60 75,60 C 69.5,60 65,55.5 65,50 C 65,44.5 69.5,40 75,40 C 80.5,40 85,44.5 85,50 Z" fill-rule="evenodd" />
-            <!-- Crossbar extensions representing the Gs -->
-            <path d="M 25,50 H 42 M 75,50 H 58" stroke="currentColor" stroke-width="4" />
+            <!-- Slip Dress Gown -->
+            <path d="M 36,20 L 39,32 M 64,20 L 61,32" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+            <path d="M 39,32 C 45,35 55,35 61,32 L 65,55 C 67,65 74,78 78,84 H 22 C 26,78 33,65 35,55 Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
         `
     },
-    prada: {
-        name: "Prada",
+    shoe: {
+        name: "High Heel",
         svgPath: `
-            <!-- Iconic Prada Triangle & P -->
-            <!-- Triangle Outline -->
-            <polygon points="50,15 90,80 10,80" fill="none" stroke="currentColor" stroke-width="3" />
-            <polygon points="50,22 83,75 17,75" fill="none" stroke="currentColor" stroke-width="1" />
-            <!-- Stylized 'P' Monogram in Center -->
-            <path d="M 45,38 H 55 C 59,38 61,40 61,44 C 61,48 59,50 55,50 H 45 V 65 M 50,50 V 38 M 45,46 H 55" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" />
+            <!-- Stiletto Pump Heel -->
+            <path d="M 15,75 C 20,75 32,74 42,66 L 70,35 C 75,30 81,30 85,35 C 89,40 88,46 83,52 L 64,68 C 55,75 48,75 42,75 M 64,65 V 82" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
         `
     },
-    louisvuitton: {
-        name: "Louis Vuitton",
+    hat: {
+        name: "Wide-Brim Hat",
         svgPath: `
-            <!-- Interlocking L & V -->
-            <!-- The 'L' (Slanted) -->
-            <path d="M 28,68 L 38,30 H 44 L 36,62 H 58 L 56,68 Z" />
-            <!-- The 'V' (Interlocking) -->
-            <path d="M 46,30 L 59,68 H 65 L 78,30 H 70 L 62,56 L 54,30 Z" />
+            <!-- Editorial Hat -->
+            <path d="M 15,65 C 15,60 85,60 85,65 C 85,70 15,70 15,65 Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M 32,62 C 32,45 38,30 50,30 C 62,30 68,45 68,62" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M 32,58 C 45,60 55,60 68,58" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
         `
     },
-    dior: {
-        name: "Dior",
+    tote: {
+        name: "Tote Bag",
         svgPath: `
-            <!-- Stylized Dior Star and typography -->
-            <!-- Central Star -->
-            <path d="M 50,20 L 53,35 L 68,35 L 56,44 L 60,59 L 50,50 L 40,59 L 44,44 L 32,35 L 47,35 Z" />
-            <!-- Typographic base circle -->
-            <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2, 6" />
-            <circle cx="50" cy="50" r="32" fill="none" stroke="currentColor" stroke-width="1" />
+            <!-- Minimalist Tote Bag -->
+            <path d="M 28,45 H 72 V 80 C 72,83 69,85 66,85 H 34 C 31,85 28,83 28,80 Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M 38,45 C 38,25 45,20 50,20 C 55,20 62,25 62,45" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
         `
     }
 };
 
 // --- GLOBAL VARIABLES & STATE ---
-let selectedBrandKey = 'chanel';
+let selectedItemKey = 'hanger';
 const mousePos = { x: 0, y: 0 };
 const cursorPos = { x: 0, y: 0 };
 const cursorSpeed = 0.15; // Speed multiplier for lag (lerp)
@@ -126,16 +106,16 @@ function formatCurrentDate() {
 
 // --- CURSOR LOGIC ---
 function selectRandomCursor() {
-    const brandKeys = Object.keys(BRAND_LOGOS);
-    const randomIndex = Math.floor(Math.random() * brandKeys.length);
-    selectedBrandKey = brandKeys[randomIndex];
-    const brand = BRAND_LOGOS[selectedBrandKey];
+    const keys = Object.keys(CLOTHING_ITEMS);
+    const randomIndex = Math.floor(Math.random() * keys.length);
+    selectedItemKey = keys[randomIndex];
+    const item = CLOTHING_ITEMS[selectedItemKey];
 
     const cursorSvg = document.getElementById('cursor-svg');
     if (cursorSvg) {
-        cursorSvg.innerHTML = brand.svgPath;
-        // Print active luxury logo cursor in console for confirmation
-        console.log(`%c Orbital Fashion: Loaded luxury cursor logo for ${brand.name} `, "background: #000; color: #fff; font-weight: bold; padding: 4px;");
+        cursorSvg.innerHTML = item.svgPath;
+        // Print active cursor item in console for confirmation
+        console.log(`%c Orbital Fashion: Loaded cursor shape for ${item.name} `, "background: #000; color: #fff; font-weight: bold; padding: 4px;");
     }
 }
 
