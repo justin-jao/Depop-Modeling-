@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Listing Manifest — eBay Lookup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F5F0;
+    --ink: #1E2420;
+    --muted: #8A8578;
+    --line: #DEDAD0;
+    --accent: #2B6E5E;
+    --accent-soft: #E4EEEA;
+    --paper: #FFFFFF;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 56px 24px 28px;
+  }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: clamp(28px, 4vw, 42px);
+    margin: 0 0 10px;
+    line-height: 1.1;
+  }
+  .sub {
+    color: var(--muted);
+    max-width: 60ch;
+    line-height: 1.5;
+    margin: 0;
+  }
+  form {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 24px 8px;
+    display: flex;
+    gap: 10px;
+  }
+  input[type="text"] {
+    flex: 1;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  input[type="text"]:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+  button {
+    padding: 14px 22px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: #235a4d; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .status-line {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 14px 24px 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+    min-height: 18px;
+  }
+  .status-line.error { color: #9A3B2F; }
+
+  main {
+    max-width: 980px;
+    margin: 24px auto 80px;
+    padding: 0 24px;
+  }
+
+  .manifest {
+    border-top: 1px solid var(--ink);
+  }
+  .row {
+    border-bottom: 1px solid var(--line);
+    padding: 20px 0;
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 18px;
+  }
+  .row-number {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    padding-top: 3px;
+  }
+  .title {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 17px;
+    margin: 0 0 10px;
+    line-height: 1.3;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px 20px;
+    margin: 0 0 12px;
+  }
+  dt {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+  }
+  dd {
+    margin: 2px 0 0;
+    font-size: 13.5px;
+  }
+  .desc {
+    font-size: 13px;
+    color: #4B5049;
+    line-height: 1.5;
+    max-height: 4.5em;
+    overflow: hidden;
+    position: relative;
+  }
+  .desc::after {
+    content: "";
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1.5em;
+    background: linear-gradient(transparent, var(--bg));
+  }
+  .empty, .loading {
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
+  }
+  footer {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 24px 60px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .modes {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 24px 14px;
+    display: flex;
+    gap: 4px;
+  }
+  .mode-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    padding: 8px 14px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .mode-btn.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="eyebrow">Listing manifest · demo</p>
+  <h1>eBay listing lookup</h1>
+  <p class="sub">Search calls your own backend, which holds the eBay app credentials and does the OAuth exchange server-side. Every result below comes from eBay's Browse API, mapped to a fixed set of fields.</p>
+</header>
+
+<div class="modes">
+  <button type="button" class="mode-btn active" data-mode="keywords">Search by keywords</button>
+  <button type="button" class="mode-btn" data-mode="url">Look up one listing URL</button>
+</div>
+
+<form id="search-form">
+  <input type="text" id="query" placeholder="e.g. vintage levis jacket" autocomplete="off">
+  <button type="submit" id="submit-btn">Search</button>
+</form>
+<p class="status-line" id="status"></p>
+
+<main>
+  <div class="manifest" id="results"></div>
+</main>
+
+<footer>
+  Backend endpoint: <code>GET /api/listings?q=&lt;keywords&gt;</code> — cached per item for 6 hours before re-querying eBay.
+</footer>
+
+<script>
+const form = document.getElementById('search-form');
+const input = document.getElementById('query');
+const status = document.getElementById('status');
+const results = document.getElementById('results');
+const btn = document.getElementById('submit-btn');
+const modeBtns = document.querySelectorAll('.mode-btn');
+
+let mode = 'keywords';
+modeBtns.forEach((b) => {
+  b.addEventListener('click', () => {
+    mode = b.dataset.mode;
+    modeBtns.forEach((x) => x.classList.toggle('active', x === b));
+    input.placeholder = mode === 'url'
+      ? 'e.g. https://www.ebay.com/itm/Some-Title/176212861437'
+      : 'e.g. vintage levis jacket';
+    btn.textContent = mode === 'url' ? 'Look up' : 'Search';
+    input.value = '';
+    results.innerHTML = '';
+    status.textContent = '';
+    status.classList.remove('error');
+  });
+});
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function fieldRow(row, i) {
+  return `
+    <div class="row">
+      <div class="row-number">${String(i + 1).padStart(2, '0')}</div>
+      <div>
+        <p class="title">${esc(row.name) || 'Untitled listing'}</p>
+        <dl>
+          <div><dt>Item ID</dt><dd>${esc(row.item_id)}</dd></div>
+          <div><dt>Price</dt><dd>${esc(row.price) || '—'}${row.price_note ? ` <span style="color:var(--muted);font-size:11px;">(${esc(row.price_note)})</span>` : ''}</dd></div>
+          <div><dt>Condition</dt><dd>${esc(row.condition) || '—'}</dd></div>
+          <div><dt>Size</dt><dd>${esc(row.size) || '—'}</dd></div>
+          <div><dt>Brand</dt><dd>${esc(row.brand) || '—'}</dd></div>
+          <div><dt>Listed</dt><dd>${row.creation_time ? new Date(row.creation_time).toLocaleString() : '—'}</dd></div>
+          <div><dt>Seller</dt><dd>${esc(row.seller_name) || '—'}</dd></div>
+          <div><dt>Category</dt><dd>${esc(row.category) || '—'}</dd></div>
+          <div><dt>Location</dt><dd>${esc(row.location) || '—'}</dd></div>
+        </dl>
+        <p class="desc">${esc((row.description || '').replace(/<[^>]*>/g, ' ')) || 'No description returned.'}</p>
+      </div>
+    </div>
+  `;
+}
+
+async function runKeywordSearch(q) {
+  const res = await fetch(`/api/listings?q=${encodeURIComponent(q)}&limit=15`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+  if (!data.items.length) {
+    results.innerHTML = '<p class="empty">No listings found for that search.</p>';
+  } else {
+    results.innerHTML = data.items.map(fieldRow).join('');
+  }
+  status.textContent = `${data.count} item${data.count === 1 ? '' : 's'} · ${data.errors.length ? data.errors.length + ' skipped due to fetch errors' : 'all fetched cleanly'}`;
+}
+
+async function runUrlLookup(url) {
+  const res = await fetch(`/api/listing?url=${encodeURIComponent(url)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+  results.innerHTML = fieldRow(data.item, 0);
+  status.textContent = data.from_cache ? 'Served from cache' : 'Fetched fresh from eBay';
+}
+
+async function runSearch(value) {
+  status.textContent = '';
+  status.classList.remove('error');
+  results.innerHTML = '<p class="loading">Fetching…</p>';
+  btn.disabled = true;
+
+  try {
+    if (mode === 'url') {
+      await runUrlLookup(value);
+    } else {
+      await runKeywordSearch(value);
+    }
+  } catch (err) {
+    status.textContent = `Error: ${err.message}`;
+    status.classList.add('error');
+    results.innerHTML = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = input.value.trim();
+  if (v) runSearch(v);
+});
+</script>
+
+</body>
+</html>
