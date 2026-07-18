@@ -1,13 +1,3 @@
-"""
-
-Setup:
-    pip install requests python-dotenv
-    cp .env.example .env   # fill in EBAY_CLIENT_ID / EBAY_CLIENT_SECRET
-
-Run:
-    python ebay_scrape.py
-"""
-
 import base64
 import json
 import os
@@ -128,6 +118,9 @@ def map_item(raw: dict) -> dict:
         else:
             price_note = "no online price (contact seller / classified ad format)"
 
+    image = raw.get("image") or {}
+    image_url = image.get("imageUrl")
+
     return {
         "item_id": raw.get("legacyItemId") or raw.get("itemId"),
         "name": raw.get("title"),
@@ -142,7 +135,24 @@ def map_item(raw: dict) -> dict:
         "category": smallest_category,
         "location": location,
         "url": raw.get("itemWebUrl"),
+        "image_url": image_url,
     }
+
+
+def download_image_base64(image_url: str):
+    """Download a listing's image and return it as a base64 data URI
+    string (e.g. 'data:image/jpeg;base64,...'), or None on failure."""
+    if not image_url:
+        return None
+    try:
+        resp = requests.get(image_url, timeout=15)
+        resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "image/jpeg").split(";")[0]
+        encoded = base64.b64encode(resp.content).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
+    except Exception as e:
+        print(f"    (image download failed: {e})")
+        return None
 
 
 def run(query: str):
@@ -164,13 +174,19 @@ def run(query: str):
             raw = get_item_detail(token, item_id)
             mapped = map_item(raw)
 
+            if mapped.get("image_url"):
+                mapped["image_base64"] = download_image_base64(mapped["image_url"])
+            else:
+                mapped["image_base64"] = None
+
             filename = f"{mapped['item_id'] or item_id}.json"
             filepath = os.path.join(OUTPUT_DIR, filename)
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(mapped, f, indent=2, ensure_ascii=False)
 
             written += 1
-            print(f"  [{i}/{len(summaries)}] wrote {filepath}")
+            has_image = " + image" if mapped["image_base64"] else ""
+            print(f"  [{i}/{len(summaries)}] wrote {filepath}{has_image}")
         except Exception as e:
             print(f"  [{i}/{len(summaries)}] FAILED {item_id}: {e}")
         time.sleep(0.1)  # light pacing, be polite to the API
