@@ -1,7 +1,7 @@
 # eBay Listing Fetcher (script only)
 
 Pulls listings from eBay's Browse API using your Developer keyset and
-writes them to a raw JSON file. No server, no frontend.
+writes them to a raw JSON file. No server, no frontend, yay!
 
 ## Setup
 
