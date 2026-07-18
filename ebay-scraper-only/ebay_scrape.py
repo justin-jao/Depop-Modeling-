@@ -1,10 +1,4 @@
 """
-ebay_scrape.py
-
-API-based equivalent of the Depop scraper - same shape (search -> pull
-listing details -> dump JSON), but uses eBay's official Browse API with
-your Developer keyset instead of launching a browser and parsing HTML.
-No server, no frontend - just a script that writes a JSON file.
 
 Setup:
     pip install requests python-dotenv
@@ -12,7 +6,6 @@ Setup:
 
 Run:
     python ebay_scrape.py
-    (it will prompt for a search query, same as the depop script did)
 """
 
 import base64
