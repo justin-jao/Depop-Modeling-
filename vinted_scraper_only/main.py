@@ -3,6 +3,7 @@ import json
 import re
 import urllib.parse
 from pathlib import Path
+from typing import Optional
 
 from crawlee import Request
 from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
@@ -26,7 +27,7 @@ def parse_next_flight_chunks(chunks: list) -> list:
     Returns a list of every payload we could successfully json.loads().
     """
     joined = "".join(chunks)
-    segments = re.split(r"(?m)^(?=\d+:)", joined)
+    segments = re.split(r"(?m)^(?=[0-9a-fA-F]+:)", joined)
 
     parsed = []
     for seg in segments:
@@ -34,7 +35,7 @@ def parse_next_flight_chunks(chunks: list) -> list:
         if not seg:
             continue
 
-        m = re.match(r"^(\d+):(.*)$", seg, re.DOTALL)
+        m = re.match(r"^([0-9a-fA-F]+):(.*)$", seg, re.DOTALL)
         if not m:
             continue
 
@@ -51,13 +52,13 @@ def parse_next_flight_chunks(chunks: list) -> list:
             try:
                 parsed.append(json.loads(candidate))
                 break
-            except Exception:
+            except json.JSONDecodeError:
                 continue
 
     return parsed
 
 
-def find_item_blob(parsed_objects: list) -> dict | None:
+def find_item_blob(parsed_objects: list) -> Optional[dict]:
     """
     Recursively search the parsed flight-stream objects for the dict that
     actually represents the Vinted item - identified by having a
@@ -213,7 +214,15 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
         )
         return
 
+    if not isinstance(catalog_payload, dict):
+        context.log.error("Catalog API returned JSON with an unexpected top-level shape.")
+        return
+
     items = catalog_payload.get("items", [])
+    if not isinstance(items, list):
+        context.log.error("Catalog API response field 'items' was not a list.")
+        return
+
     context.log.info(f"Catalog API returned {len(items)} item(s).")
 
     if not items:
@@ -233,6 +242,10 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
 
     saved = 0
     for item_summary in items[:MAX_LISTINGS]:
+        if not isinstance(item_summary, dict):
+            context.log.warning("Skipping a catalog item with an unexpected data shape.")
+            continue
+
         item_id = item_summary.get("id")
         if item_id is None:
             continue
@@ -254,7 +267,7 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
         # record above is kept as-is and the raw state (if any) is stashed
         # for inspection.
         item_path = item_summary.get("path") or item_summary.get("url")
-        if item_path:
+        if isinstance(item_path, str) and item_path:
             item_page_url = item_path if item_path.startswith("http") else f"https://www.{domain}{item_path}"
         else:
             item_page_url = f"https://www.{domain}/items/{item_id}"
