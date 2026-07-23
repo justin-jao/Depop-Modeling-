@@ -5,7 +5,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Optional
 
-from crawlee import Request
+from crawlee import RequestA
 from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
 
 # How many listings we want back
