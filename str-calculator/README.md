@@ -1,10 +1,9 @@
-# Depop-Modeling-
+# Listing Volume Calculator
 
-Price Comparison - On Singular Secondhand Site <br>
-Aggregate price comparison on depop <br>
-Figure out how to scrape depop api <br>
-Extract data to create dataframe <br>
-Store it in SQLres <br>
-Use pandas to modify dataframe <br>
-Create data visualization on the frontend <br>
-Create models on which keywords lead to most price difference, check caption and listing description <br>
+Run `listing_volume.py` to fetch eBay volume and revenue analytics for a search query, then enter your piece cost to see an estimated gross margin that accounts for eBay fees.
+
+Example:
+
+```bash
+python listing_volume.py
+```
