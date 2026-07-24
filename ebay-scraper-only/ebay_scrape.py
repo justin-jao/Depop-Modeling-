@@ -22,6 +22,13 @@ else:
 
 OUTPUT_DIR = "ebay_results"
 RESULTS_LIMIT = 10  # how many search results to pull full detail for
+SEARCH_PAGE_SIZE = 200
+BUY_IT_NOW_FILTER = "buyingOptions:{FIXED_PRICE}"
+
+
+def is_buy_it_now_only(item_summary: dict) -> bool:
+    buying_options = set(item_summary.get("buyingOptions") or [])
+    return "FIXED_PRICE" in buying_options and "AUCTION" not in buying_options
 
 
 def get_app_token() -> str:
@@ -52,17 +59,37 @@ def get_app_token() -> str:
 
 
 def search_items(token: str, query: str, limit: int):
-    resp = requests.get(
-        f"{BROWSE_BASE}/item_summary/search",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-        },
-        params={"q": query, "limit": limit},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json().get("itemSummaries", [])
+    summaries = []
+    offset = 0
+
+    while len(summaries) < limit:
+        page_limit = min(SEARCH_PAGE_SIZE, limit)
+        resp = requests.get(
+            f"{BROWSE_BASE}/item_summary/search",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+            },
+            params={"q": query, "limit": page_limit, "offset": offset, "filter": BUY_IT_NOW_FILTER},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        item_summaries = payload.get("itemSummaries", [])
+        if not item_summaries:
+            break
+
+        for summary in item_summaries:
+            if is_buy_it_now_only(summary):
+                summaries.append(summary)
+                if len(summaries) >= limit:
+                    break
+
+        offset += len(item_summaries)
+        if offset >= payload.get("total", 0):
+            break
+
+    return summaries
 
 
 def get_item_detail(token: str, item_id: str):
@@ -172,6 +199,9 @@ def run(query: str):
             continue
         try:
             raw = get_item_detail(token, item_id)
+            if not is_buy_it_now_only(raw):
+                print(f"  [{i}/{len(summaries)}] skipped {item_id}: not Buy It Now-only")
+                continue
             mapped = map_item(raw)
 
             if mapped.get("image_url"):
