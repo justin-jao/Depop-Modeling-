@@ -22,4 +22,4 @@ echo "Installing dependencies..."
 ./venv/bin/python -m playwright install chromium
 
 echo "Running Vinted scraper..."
-./venv/bin/python main.py
+exec ./venv/bin/python main.py

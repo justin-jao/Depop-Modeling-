@@ -5,7 +5,7 @@ import re
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 # How many listings we want back
 MAX_LISTINGS = 5
@@ -15,12 +15,23 @@ PROJECT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_DIR / "results"
 VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
 VENV_DIR = PROJECT_DIR / "venv"
+RUN_SCRIPT = PROJECT_DIR / "run.sh"
+JSON_ACCEPT_HEADER = "application/json, text/plain, */*"
+ITEM_DETAIL_ENDPOINTS = (
+    "https://www.{domain}/api/v2/items/{item_id}",
+    "https://www.{domain}/api/v2/items/{item_id}?localize=true",
+    "https://www.{domain}/api/v2/catalog/items/{item_id}",
+)
 
 
 def use_project_interpreter() -> None:
-    """Re-run with the project's pinned virtual environment when available."""
+    """Create the project venv if needed, then always run with its Python."""
     if not VENV_PYTHON.is_file():
-        return
+        if not RUN_SCRIPT.is_file():
+            raise RuntimeError(
+                "The project virtual environment is missing and run.sh could not be found."
+            )
+        os.execv(str(RUN_SCRIPT), [str(RUN_SCRIPT)])
 
     try:
         running_prefix = Path(sys.prefix).resolve()
@@ -195,6 +206,17 @@ def _dict_or_empty(value):
     return value if isinstance(value, dict) else {}
 
 
+def _value_from(obj: dict, path: Union[tuple, str]):
+    return _get(obj, *path) if isinstance(path, tuple) else obj.get(path)
+
+
+def _from_item_then_fallback(item: dict, fallback: dict, *paths):
+    return _first_non_empty(
+        *(_value_from(item, path) for path in paths),
+        *(_value_from(fallback, path) for path in paths),
+    )
+
+
 def _is_reference_token(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("$") and ":" in value
 
@@ -259,18 +281,14 @@ async def fetch_item_detail_via_internal_api(
     referer_url: str,
 ) -> Optional[dict]:
     """Try known internal item endpoints and return a detail dict when available."""
-    urls = [
-        f"https://www.{domain}/api/v2/items/{item_id}",
-        f"https://www.{domain}/api/v2/items/{item_id}?localize=true",
-        f"https://www.{domain}/api/v2/catalog/items/{item_id}",
-    ]
+    urls = [template.format(domain=domain, item_id=item_id) for template in ITEM_DETAIL_ENDPOINTS]
 
     for url in urls:
         try:
             response = await context.page.request.get(
                 url,
                 headers={
-                    "Accept": "application/json, text/plain, */*",
+                    "Accept": JSON_ACCEPT_HEADER,
                     "Referer": referer_url,
                 },
             )
@@ -397,65 +415,62 @@ async def extract_item_metadata_from_scripts(
         except Exception:
             return raw_value
 
-    brand_id_raw = _capture_any([
-        r'\\"brand_dto\\":\\{[^}]*\\"id\\":(\\d+)',
-        r'"brand_dto":\{[^}]*"id":(\d+)',
-    ])
-    brand_title_raw = _capture_any([
-        r'\\"brand_dto\\":\\{[^}]*\\"title\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
-        r'"brand_dto":\{[^}]*"title":"((?:\\.|[^"\\])*)"',
-    ])
-    catalog_id_raw = _capture_any([
-        r'\\"catalog_id\\":(\\d+)',
-        r'"catalog_id":(\d+)',
-    ])
-    category_raw = _capture_any([
-        r'"category":"((?:\\.|[^"\\])*)"',
-    ])
-    description_raw = _capture_any([
-        r'\\"description\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
-        r'"description":"((?:\\.|[^"\\])*)"',
-    ])
-    updated_at_raw = _capture_any([
-        r'\\"updated_at\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
-        r'"updated_at":"((?:\\.|[^"\\])*)"',
-    ])
-    created_at_raw = _capture_any([
-        r'\\"created_at\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
-        r'"created_at":"((?:\\.|[^"\\])*)"',
-    ])
-    city_raw = _capture_any([
-        r'\\"city\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
-        r'"city":"((?:\\.|[^"\\])*)"',
-    ])
-    country_raw = _capture_any([
-        r'\\"country_title\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
-        r'"country_title":"((?:\\.|[^"\\])*)"',
-    ])
-
-    if not country_raw:
-        country_raw = "United Kingdom" if "United Kingdom" in snippet else None
+    captured = {
+        key: _capture_any(patterns)
+        for key, patterns in {
+            "brand_id": [
+                r'\\"brand_dto\\":\\{[^}]*\\"id\\":(\\d+)',
+                r'"brand_dto":\{[^}]*"id":(\d+)',
+            ],
+            "brand_title": [
+                r'\\"brand_dto\\":\\{[^}]*\\"title\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
+                r'"brand_dto":\{[^}]*"title":"((?:\\.|[^"\\])*)"',
+            ],
+            "catalog_id": [
+                r'\\"catalog_id\\":(\\d+)',
+                r'"catalog_id":(\d+)',
+            ],
+            "category": [
+                r'"category":"((?:\\.|[^"\\])*)"',
+            ],
+            "description": [
+                r'\\"description\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
+                r'"description":"((?:\\.|[^"\\])*)"',
+            ],
+            "updated_at": [
+                r'\\"updated_at\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
+                r'"updated_at":"((?:\\.|[^"\\])*)"',
+            ],
+            "created_at": [
+                r'\\"created_at\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
+                r'"created_at":"((?:\\.|[^"\\])*)"',
+            ],
+            "city": [
+                r'\\"city\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
+                r'"city":"((?:\\.|[^"\\])*)"',
+            ],
+            "country_title": [
+                r'\\"country_title\\":\\"((?:\\\\.|[^"\\\\])*)\\"',
+                r'"country_title":"((?:\\.|[^"\\])*)"',
+            ],
+        }.items()
+    }
+    if not captured["country_title"]:
+        captured["country_title"] = "United Kingdom" if "United Kingdom" in snippet else None
 
     out: dict[str, Any] = {}
-    if brand_id_raw:
-        out["brand_dto"] = {"id": int(brand_id_raw)}
-    if brand_title_raw:
+    if captured["brand_id"]:
+        out["brand_dto"] = {"id": int(captured["brand_id"])}
+    if captured["brand_title"]:
         out["brand_dto"] = out.get("brand_dto", {})
-        out["brand_dto"]["title"] = _decode(brand_title_raw)
-    if catalog_id_raw:
-        out["catalog_id"] = int(catalog_id_raw)
-    if category_raw and "catalog_id" not in out:
-        out["catalog_title"] = _decode(category_raw)
-    if description_raw:
-        out["description"] = _decode(description_raw)
-    if updated_at_raw:
-        out["updated_at"] = _decode(updated_at_raw)
-    if created_at_raw:
-        out["created_at"] = _decode(created_at_raw)
-    if city_raw:
-        out["city"] = _decode(city_raw)
-    if country_raw:
-        out["country_title"] = _decode(country_raw)
+        out["brand_dto"]["title"] = _decode(captured["brand_title"])
+    if captured["catalog_id"]:
+        out["catalog_id"] = int(captured["catalog_id"])
+    if captured["category"] and "catalog_id" not in out:
+        out["catalog_title"] = _decode(captured["category"])
+    for key in ("description", "updated_at", "created_at", "city", "country_title"):
+        if captured[key]:
+            out[key] = _decode(captured[key])
 
     return out
 
@@ -478,54 +493,39 @@ def build_record(item: dict, fallback: Optional[dict] = None) -> dict:
     condition = _first_non_empty(item.get("status"), fallback.get("status"))
     listing_status = _derive_listing_status(item, fallback=fallback)
 
-    brand_id = _first_non_empty(
-        _get(item, "brand_dto", "id"),
-        item.get("brand_id"),
-        _get(item, "brand", "id"),
-        _get(fallback, "brand_dto", "id"),
-        fallback.get("brand_id"),
-        _get(fallback, "brand", "id"),
+    brand_id = _from_item_then_fallback(item, fallback, ("brand_dto", "id"), "brand_id", ("brand", "id"))
+    brand_name = _from_item_then_fallback(
+        item,
+        fallback,
+        ("brand_dto", "title"),
+        "brand_title",
+        ("brand", "title"),
+        ("brand", "name"),
     )
-    brand_name = _first_non_empty(
-        _get(item, "brand_dto", "title"),
-        item.get("brand_title"),
-        _get(item, "brand", "title"),
-        _get(item, "brand", "name"),
-        _get(fallback, "brand_dto", "title"),
-        fallback.get("brand_title"),
-        _get(fallback, "brand", "title"),
-        _get(fallback, "brand", "name"),
-    )
-
-    category = _first_non_empty(
-        _get(item, "catalog", "title"),
-        item.get("catalog_title"),
-        item.get("catalog_name"),
-        item.get("catalog_id"),
-        _get(item, "catalog", "id"),
-        _get(fallback, "catalog", "title"),
-        fallback.get("catalog_title"),
-        fallback.get("catalog_name"),
-        fallback.get("catalog_id"),
-        _get(fallback, "catalog", "id"),
+    category = _from_item_then_fallback(
+        item,
+        fallback,
+        ("catalog", "title"),
+        "catalog_title",
+        "catalog_name",
+        "catalog_id",
+        ("catalog", "id"),
     )
 
-    seller_description = _first_non_empty(item.get("description"), fallback.get("description"))
-    last_edited_at = _first_non_empty(
-        item.get("updated_at"),
-        item.get("updated_at_ts"),
-        item.get("modified_at"),
-        fallback.get("updated_at"),
-        fallback.get("updated_at_ts"),
-        fallback.get("modified_at"),
+    seller_description = _from_item_then_fallback(item, fallback, "description")
+    last_edited_at = _from_item_then_fallback(
+        item,
+        fallback,
+        "updated_at",
+        "updated_at_ts",
+        "modified_at",
     )
-    uploaded_at = _first_non_empty(
-        item.get("created_at"),
-        item.get("created_at_ts"),
-        item.get("upload_date"),
-        fallback.get("created_at"),
-        fallback.get("created_at_ts"),
-        fallback.get("upload_date"),
+    uploaded_at = _from_item_then_fallback(
+        item,
+        fallback,
+        "created_at",
+        "created_at_ts",
+        "upload_date",
     )
 
     price_amount = price
@@ -590,7 +590,7 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
     catalog_response = await context.page.request.get(
         catalog_url,
         headers={
-            "Accept": "application/json, text/plain, */*",
+            "Accept": JSON_ACCEPT_HEADER,
             "Referer": context.request.url,
         },
     )
@@ -662,10 +662,11 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
         # if it doesn't find a recognizable pattern, the catalog-based
         # record above is kept as-is.
         item_path = item_summary.get("path") or item_summary.get("url")
-        if isinstance(item_path, str) and item_path:
-            item_page_url = item_path if item_path.startswith("http") else f"https://www.{domain}{item_path}"
-        else:
-            item_page_url = f"https://www.{domain}/items/{item_id}"
+        item_page_url = (
+            item_path if isinstance(item_path, str) and item_path.startswith("http")
+            else f"https://www.{domain}{item_path}" if isinstance(item_path, str) and item_path
+            else f"https://www.{domain}/items/{item_id}"
+        )
 
         try:
             network_item_detail = await fetch_item_detail_from_page_api_responses(

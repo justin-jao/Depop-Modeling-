@@ -84,9 +84,9 @@ The launcher automatically:
    python main.py
    ```
 
-   If `venv/` exists, `main.py` automatically restarts with that project's
-   interpreter. This prevents globally installed Anaconda/Python packages
-   from causing Crawlee or Pydantic validation errors.
+   `main.py` automatically creates `venv/` through `run.sh` when needed and
+   restarts with that project's interpreter. This prevents globally installed
+   Anaconda/Python packages from causing Crawlee or Pydantic validation errors.
 
    You'll be prompted for:
    - A search query (e.g. `nike air max`)

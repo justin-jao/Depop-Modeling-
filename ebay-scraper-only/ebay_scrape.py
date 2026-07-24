@@ -13,17 +13,29 @@ CLIENT_ID = os.environ.get("EBAY_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("EBAY_CLIENT_SECRET")
 MARKETPLACE_ID = os.environ.get("EBAY_MARKETPLACE_ID", "EBAY_US")
 
-if EBAY_ENV == "SANDBOX":
-    OAUTH_URL = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
-    BROWSE_BASE = "https://api.sandbox.ebay.com/buy/browse/v1"
-else:
-    OAUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token"
-    BROWSE_BASE = "https://api.ebay.com/buy/browse/v1"
+_EBAY_URLS = {
+    "SANDBOX": (
+        "https://api.sandbox.ebay.com/identity/v1/oauth2/token",
+        "https://api.sandbox.ebay.com/buy/browse/v1",
+    ),
+    "PRODUCTION": (
+        "https://api.ebay.com/identity/v1/oauth2/token",
+        "https://api.ebay.com/buy/browse/v1",
+    ),
+}
+OAUTH_URL, BROWSE_BASE = _EBAY_URLS.get(EBAY_ENV, _EBAY_URLS["PRODUCTION"])
 
 OUTPUT_DIR = "ebay_results"
 RESULTS_LIMIT = 10  # how many search results to pull full detail for
 SEARCH_PAGE_SIZE = 200
 BUY_IT_NOW_FILTER = "buyingOptions:{FIXED_PRICE}"
+
+
+def _auth_headers(token: str) -> dict:
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+    }
 
 
 def is_buy_it_now_only(item_summary: dict) -> bool:
@@ -66,10 +78,7 @@ def search_items(token: str, query: str, limit: int):
         page_limit = min(SEARCH_PAGE_SIZE, limit)
         resp = requests.get(
             f"{BROWSE_BASE}/item_summary/search",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-            },
+            headers=_auth_headers(token),
             params={"q": query, "limit": page_limit, "offset": offset, "filter": BUY_IT_NOW_FILTER},
             timeout=15,
         )
@@ -95,10 +104,7 @@ def search_items(token: str, query: str, limit: int):
 def get_item_detail(token: str, item_id: str):
     resp = requests.get(
         f"{BROWSE_BASE}/item/{item_id}",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-        },
+        headers=_auth_headers(token),
         timeout=15,
     )
     resp.raise_for_status()
@@ -106,10 +112,14 @@ def get_item_detail(token: str, item_id: str):
 
 
 def extract_aspect(aspects, name):
-    for a in aspects or []:
-        if a.get("name", "").strip().lower() == name.lower():
-            return a.get("value")
-    return None
+    return next(
+        (
+            a.get("value")
+            for a in (aspects or [])
+            if a.get("name", "").strip().lower() == name.lower()
+        ),
+        None,
+    )
 
 
 def map_item(raw: dict) -> dict:
@@ -119,26 +129,29 @@ def map_item(raw: dict) -> dict:
     smallest_category = categories[-1]["categoryName"] if categories else None
 
     loc = raw.get("itemLocation") or {}
-    location = ", ".join(
-        p for p in [loc.get("city"), loc.get("stateOrProvince"), loc.get("country")] if p
-    ) or None
+    location = ", ".join(filter(None, [loc.get("city"), loc.get("stateOrProvince"), loc.get("country")])) or None
 
     seller = raw.get("seller") or {}
 
+    def _price_string(price_source: dict) -> str | None:
+        return (
+            f"{price_source.get('value')} {price_source.get('currency', '')}".strip()
+            if price_source.get("value")
+            else None
+        )
+
     price_info = raw.get("price") or {}
-    price = None
+    price = _price_string(price_info)
     price_note = None
-    if price_info.get("value"):
-        price = f"{price_info.get('value')} {price_info.get('currency', '')}".strip()
-    else:
+    if not price:
         bid_info = raw.get("currentBidPrice") or {}
         marketing = raw.get("marketingPrice") or {}
         original_info = marketing.get("originalPrice") or {}
-        if bid_info.get("value"):
-            price = f"{bid_info.get('value')} {bid_info.get('currency', '')}".strip()
+        if _price_string(bid_info):
+            price = _price_string(bid_info)
             price_note = "current bid (auction)"
-        elif original_info.get("value"):
-            price = f"{original_info.get('value')} {original_info.get('currency', '')}".strip()
+        elif _price_string(original_info):
+            price = _price_string(original_info)
             price_note = "listed price"
         elif raw.get("itemGroupType"):
             price_note = "price varies by variation - not returned at item level"
@@ -204,10 +217,9 @@ def run(query: str):
                 continue
             mapped = map_item(raw)
 
-            if mapped.get("image_url"):
-                mapped["image_base64"] = download_image_base64(mapped["image_url"])
-            else:
-                mapped["image_base64"] = None
+            mapped["image_base64"] = (
+                download_image_base64(mapped["image_url"]) if mapped.get("image_url") else None
+            )
 
             filename = f"{mapped['item_id'] or item_id}.json"
             filepath = os.path.join(OUTPUT_DIR, filename)
