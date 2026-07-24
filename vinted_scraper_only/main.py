@@ -1,18 +1,47 @@
 import asyncio
 import json
+import os
 import re
+import sys
 import urllib.parse
 from pathlib import Path
 from typing import Any, Optional
-
-from crawlee import Request
-from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
 
 # How many listings we want back
 MAX_LISTINGS = 5
 
 # Every listing gets its own file in here: results/listing_<id>.json
-OUTPUT_DIR = Path(__file__).parent / "results"
+PROJECT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = PROJECT_DIR / "results"
+VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
+VENV_DIR = PROJECT_DIR / "venv"
+
+
+def use_project_interpreter() -> None:
+    """Re-run with the project's pinned virtual environment when available."""
+    if not VENV_PYTHON.is_file():
+        return
+
+    try:
+        running_prefix = Path(sys.prefix).resolve()
+        project_prefix = VENV_DIR.resolve()
+    except OSError:
+        return
+
+    if running_prefix != project_prefix:
+        os.execv(
+            str(VENV_PYTHON),
+            [str(VENV_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]],
+        )
+
+
+if __name__ == "__main__":
+    use_project_interpreter()
+
+# These imports must come after the interpreter guard: global Anaconda/Python
+# environments may have incompatible Crawlee, Pydantic, or Playwright versions.
+from crawlee import Request
+from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
 
 
 def parse_next_flight_chunks(chunks: list) -> list:

@@ -35,6 +35,22 @@ front-end HTML/CSS changes than a pure DOM scraper.
 
 ## Setup (VS Code)
 
+### Fastest option
+
+From this folder, run:
+
+```bash
+./run.sh
+```
+
+The launcher automatically:
+- creates `venv/` if it does not exist
+- installs `requirements.txt`
+- installs Playwright Chromium
+- runs `main.py`
+
+### Manual option
+
 1. Open this folder in VS Code.
 2. Create and activate a virtual environment:
 
@@ -59,18 +75,26 @@ front-end HTML/CSS changes than a pure DOM scraper.
    playwright install chromium
    ```
 
+   The requirements file pins the Crawlee/Pydantic/Browserforge combination
+   tested by this project. Do not upgrade those packages independently unless
+   you also re-test the crawler startup.
+
 4. Run it:
    ```bash
    python main.py
    ```
 
+   If `venv/` exists, `main.py` automatically restarts with that project's
+   interpreter. This prevents globally installed Anaconda/Python packages
+   from causing Crawlee or Pydantic validation errors.
+
    You'll be prompted for:
    - A search query (e.g. `nike air max`)
-   - A Vinted domain (e.g. `vinted.co.uk`, `vinted.de`, `vinted.fr` — Vinted
-     runs per-country sites, so pick the one you want to search)
+
+   The current scraper targets `vinted.co.uk` in code.
 
 5. Output:
-   - `vinted_results.json` in this folder — the 10 clean records.
+   - `results/` — one JSON file per listing plus debug artifacts for the first item.
    - `storage/` — Crawlee's own request queue/dataset (safe to delete/ignore).
 
 ## Notes & troubleshooting
