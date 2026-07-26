@@ -1,26 +1,26 @@
 import os
 import sqlite3
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
-DB_PATH = os.environ.get("SQLITE_DB_PATH", "./data.db")
+SCRIPT_DIR = Path(__file__).resolve().parent
+DB_PATH = os.environ.get("SQLITE_DB_PATH", str(SCRIPT_DIR / "ebay_listings.db"))
 DEFAULT_EBAY_FEE_RATE = Decimal(os.environ.get("EBAY_ESTIMATED_FEE_RATE", "0.1325"))
 
 SQL_QUERY = """
--- Replace this SQL with your own.
--- Example:
--- SELECT
---   COUNT(*) AS total_listings,
---   COALESCE(SUM(price), 0) AS total_revenue,
---   COALESCE(AVG(price), 0) AS average_revenue,
---   'USD' AS currency,
---   COUNT(price) AS listings_with_price
--- FROM listings
--- WHERE title LIKE '%' || ? || '%';
+WITH filtered AS (
+    SELECT
+        CAST(NULLIF(TRIM(REPLACE(price, ' USD', '')), '') AS REAL) AS price_value
+    FROM listings
+    WHERE name LIKE '%' || ? || '%'
+)
 SELECT
-  0 AS total_listings,
-  0 AS total_revenue,
-  0 AS average_revenue,
-  'USD' AS currency
+COUNT(*) AS total_listings,
+COALESCE(SUM(price_value), 0) AS total_revenue,
+COALESCE(AVG(price_value), 0) AS average_revenue,
+'USD' AS currency,
+COUNT(price_value) AS listings_with_price
+FROM filtered;
 """
 
 
@@ -74,6 +74,15 @@ def get_listing_revenue_stats(db_path: str, sql_query: str, query: str) -> dict:
     params = (query,) if "?" in sql_query else ()
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
+        has_listings = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='listings'"
+        ).fetchone()
+        if not has_listings:
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+            raise RuntimeError(
+                f"Database '{db_path}' does not contain a 'listings' table. "
+                f"Available tables: {', '.join(tables) if tables else '(none)'}"
+            )
         row = conn.execute(sql_query, params).fetchone()
 
     if row is None:
