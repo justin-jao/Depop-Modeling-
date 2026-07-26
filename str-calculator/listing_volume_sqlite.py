@@ -1,18 +1,3 @@
-c"""
-listing_volume_sqlite.py
-
-SQLite-first copy of listing_volume.py.
-No eBay API, no OAuth, no web requests.
-
-Edit SQL_QUERY to match your schema. It should return one row with at least:
-- total_listings
-- total_revenue
-- average_revenue
-- currency
-
-If your query contains '?', the script passes the user search query as that parameter.
-"""
-
 import os
 import sqlite3
 from decimal import Decimal, InvalidOperation
