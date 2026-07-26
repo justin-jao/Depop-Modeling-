@@ -6,7 +6,7 @@ An end-to-end Extract, Load, and Transform (ELT) pipeline for scraping Depop lis
 This project follows an ELT workflow to preserve data lineage:
 1. **Extract (`depop.scrape.py`):** A headless Playwright crawler that navigates Depop search results and product pages, bypassing anti-bot protections using window positioning and stealth scripts.
 2. **Load (`pipeline.load.py`):** Loads raw JSON payloads from Crawlee storage into an immutable landing zone (`raw_listings` table) inside SQLite.
-3. **Transform (`pipelin.transform.py`):** Parses nested JSON, normalizes data into relational tables (`sellers` and `listings`), cleans prices, and handles deduplication via `UPSERT`.
+3. **Transform (`pipeline.transform.py`):** Parses nested JSON, normalizes data into relational tables (`sellers` and `listings`), cleans prices, and handles deduplication via `UPSERT`.
 
 ##  Getting Started
 
