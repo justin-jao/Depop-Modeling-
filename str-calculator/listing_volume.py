@@ -405,8 +405,4 @@ def calculate_listing_volume(query: str, piece_cost: Decimal) -> int:
 if __name__ == "__main__":
     user_query = input("Enter your eBay search query: ")
     piece_cost = parse_decimal_input("Enter your buying cost of your piece: ")
-<<<<<<< HEAD
     calculate_listing_volume(user_query, piece_cost)
-=======
-    calculate_listing_volume(user_query, piece_cost)
->>>>>>> 63db438 (Added new functionality: average revenue after fees, gross margin, and now it will recommend a price for users.)
