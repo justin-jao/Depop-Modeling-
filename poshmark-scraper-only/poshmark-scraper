@@ -1,0 +1,237 @@
+import asyncio
+import json
+import re
+from urllib.parse import quote
+
+from playwright.async_api import async_playwright
+
+
+async def scrape_poshmark(query, limit=5):
+
+    search_url = (
+        f"https://poshmark.com/search?"
+        f"query={quote(query)}&type=listings&src=dir"
+    )
+
+    listings = []
+
+    async with async_playwright() as p:
+
+        browser = await p.chromium.launch(
+            headless=True
+        )
+
+        page = await browser.new_page(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+                " AppleWebKit/537.36 Chrome/120 Safari/537.36"
+            )
+        )
+
+        await page.goto(
+            search_url,
+            wait_until="networkidle",
+            timeout=60000
+        )
+
+        # wait for listing cards
+        await page.wait_for_timeout(3000)
+
+
+        # Extract all links containing listings
+        links = await page.locator(
+            "a[href*='/listing/']"
+        ).evaluate_all(
+            """
+            els => els.map(e => e.href)
+            """
+        )
+
+
+        urls = list(dict.fromkeys(links))[:limit]
+
+
+        for url in urls:
+
+            listing_page = await browser.new_page()
+
+            try:
+
+                await listing_page.goto(
+                    url,
+                    wait_until="networkidle",
+                    timeout=60000
+                )
+
+                await listing_page.wait_for_timeout(2000)
+
+
+                # Grab Next.js data
+                html = await listing_page.content()
+
+
+                data_match = re.search(
+                    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                    html
+                )
+
+
+                listing_data = {}
+
+                if data_match:
+                    listing_data = json.loads(
+                        data_match.group(1)
+                    )
+
+
+                text = await listing_page.locator(
+                    "body"
+                ).inner_text()
+
+
+                # helpers
+                def find(pattern):
+                    match = re.search(
+                        pattern,
+                        text,
+                        re.I
+                    )
+                    return match.group(1).strip() if match else None
+
+
+                listing_id = (
+                    re.search(
+                        r"/listing/[^/]+-(\d+)",
+                        url
+                    )
+                )
+
+                listing_id = (
+                    listing_id.group(1)
+                    if listing_id
+                    else None
+                )
+
+
+                item = {
+
+                    "listing_id": listing_id,
+
+                    "name": find(
+                        r"^(.*?)\n"
+                    ),
+
+                    "condition": find(
+                        r"Condition\s+(.*?)\n"
+                    ),
+
+                    "size": find(
+                        r"Size\s+(.*?)\n"
+                    ),
+
+                    "brand": find(
+                        r"Brand\s+(.*?)\n"
+                    ),
+
+                    "price": find(
+                        r"\$(\d+(?:\.\d+)?)"
+                    ),
+
+                    "description": find(
+                        r"Description\s+(.*?)\n"
+                    ),
+
+                    "creation_time": find(
+                        r"(?:Listed|Created)\s+(.*?)\n"
+                    ),
+
+                    "seller_name": find(
+                        r"@([A-Za-z0-9_-]+)"
+                    ),
+
+                    "category": "Clothing",
+
+                    "location": find(
+                        r"Location\s+(.*?)\n"
+                    ),
+
+                    "url": url
+                }
+
+
+                listings.append(item)
+
+
+            except Exception as e:
+
+                print(
+                    f"Failed scraping {url}: {e}"
+                )
+
+            finally:
+                await listing_page.close()
+
+
+        await browser.close()
+
+
+    return listings
+
+
+
+if __name__ == "__main__":
+
+
+    query = input(
+        "Search Poshmark: "
+    )
+
+
+    results = asyncio.run(
+        scrape_poshmark(query)
+    )
+
+
+    print(
+        json.dumps(
+            results,
+            indent=4
+        )
+    )
+
+
+    import os
+
+# Create output folder
+output_folder = "poshmark_json"
+
+os.makedirs(
+    output_folder,
+    exist_ok=True
+)
+
+
+# Save each listing separately
+for listing in results:
+
+    listing_id = listing["listing_id"]
+
+    filename = f"{listing_id}.json"
+
+    filepath = os.path.join(
+        output_folder,
+        filename
+    )
+
+    with open(filepath, "w") as f:
+
+        json.dump(
+            listing,
+            f,
+            indent=4
+        )
+
+
+print(
+    f"Saved {len(results)} JSON files to {output_folder}/"
+)
