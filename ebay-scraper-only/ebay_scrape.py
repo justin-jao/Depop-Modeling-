@@ -46,7 +46,7 @@ def _normalized_oauth_scope() -> str:
 OAUTH_SCOPE = _normalized_oauth_scope()
 
 OUTPUT_DIR = "ebay_results"
-RESULTS_LIMIT = 50  # how many search results to pull full detail for
+RESULTS_LIMIT = 20  # how many search results to pull full detail for
 SEARCH_PAGE_SIZE = 200
 BUY_IT_NOW_FILTER = "buyingOptions:{FIXED_PRICE}"
 
@@ -293,7 +293,15 @@ def map_item(raw: dict) -> dict:
             else None
         )
 
+    def _currency_code(price_source: dict) -> str | None:
+        value = price_source.get("currency")
+        if value is None:
+            return None
+        value_text = str(value).strip()
+        return value_text or None
+
     price_info = raw.get("price") or {}
+    currency = _currency_code(price_info)
     price = _price_string(price_info)
     if not price:
         bid_info = raw.get("currentBidPrice") or {}
@@ -301,26 +309,30 @@ def map_item(raw: dict) -> dict:
         original_info = marketing.get("originalPrice") or {}
         if _price_string(bid_info):
             price = _price_string(bid_info)
+            currency = _currency_code(bid_info)
         elif _price_string(original_info):
             price = _price_string(original_info)
+            currency = _currency_code(original_info)
 
     image = raw.get("image") or {}
     image_url = image.get("imageUrl")
 
     return {
         "listing_id": raw.get("legacyItemId") or raw.get("itemId"),
+        "source": "ebay",
+        "source_url": raw.get("itemWebUrl"),
         "title": raw.get("title"),
-        "condition": raw.get("condition"),
-        "size": extract_size(aspects),
-        "brand": extract_aspect(aspects, "Brand"),
-        "price": price,
         "desc": clean_description(raw.get("description")),
+        "price": price,
+        "currency": currency,
+        "brand": extract_aspect(aspects, "Brand"),
+        "size": extract_size(aspects),
+        "condition": raw.get("condition"),
         "created_at": raw.get("itemCreationDate"),
         "seller_id": extract_seller_id(seller),
         "username": seller.get("username"),
         "category": leaf_category_name,
         "location": location,
-        "source_url": raw.get("itemWebUrl"),
         "image_url": image_url,
     }
 
@@ -346,7 +358,7 @@ def run(query: str):
                 print(f"  [{i}/{len(summaries)}] skipped {item_id}: not Buy It Now-only")
                 continue
             mapped = map_item(raw)
-            mapped["scraper_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            mapped["scraped_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             mapped["search_query"] = query
 
             filename = f"{mapped['listing_id'] or item_id}.json"
