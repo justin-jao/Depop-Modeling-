@@ -46,7 +46,7 @@ def _normalized_oauth_scope() -> str:
 OAUTH_SCOPE = _normalized_oauth_scope()
 
 OUTPUT_DIR = "ebay_results"
-RESULTS_LIMIT = 10  # how many search results to pull full detail for
+RESULTS_LIMIT = 50  # how many search results to pull full detail for
 SEARCH_PAGE_SIZE = 200
 BUY_IT_NOW_FILTER = "buyingOptions:{FIXED_PRICE}"
 
@@ -325,22 +325,6 @@ def map_item(raw: dict) -> dict:
     }
 
 
-def download_image_base64(image_url: str):
-    """Download a listing's image and return it as a base64 data URI
-    string (e.g. 'data:image/jpeg;base64,...'), or None on failure."""
-    if not image_url:
-        return None
-    try:
-        resp = requests.get(image_url, timeout=15)
-        resp.raise_for_status()
-        content_type = resp.headers.get("Content-Type", "image/jpeg").split(";")[0]
-        encoded = base64.b64encode(resp.content).decode("ascii")
-        return f"data:{content_type};base64,{encoded}"
-    except Exception as e:
-        print(f"    (image download failed: {e})")
-        return None
-
-
 def run(query: str):
     print(f"Getting OAuth token ({EBAY_ENV})...")
     token = get_app_token()
@@ -365,18 +349,13 @@ def run(query: str):
             mapped["scraper_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             mapped["search_query"] = query
 
-            mapped["image_base64"] = (
-                download_image_base64(mapped["image_url"]) if mapped.get("image_url") else None
-            )
-
             filename = f"{mapped['listing_id'] or item_id}.json"
             filepath = os.path.join(OUTPUT_DIR, filename)
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(mapped, f, indent=2, ensure_ascii=False)
 
             written += 1
-            has_image = " + image" if mapped["image_base64"] else ""
-            print(f"  [{i}/{len(summaries)}] wrote {filepath}{has_image}")
+            print(f"  [{i}/{len(summaries)}] wrote {filepath}")
         except Exception as e:
             print(f"  [{i}/{len(summaries)}] FAILED {item_id}: {e}")
         time.sleep(0.1)  # light pacing, be polite to the API
