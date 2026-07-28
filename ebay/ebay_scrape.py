@@ -46,6 +46,7 @@ def _normalized_oauth_scope() -> str:
 OAUTH_SCOPE = _normalized_oauth_scope()
 
 OUTPUT_DIR = "ebay_results"
+SELLER_OUTPUT_DIR = "ebay_sellers"
 RESULTS_LIMIT = 10  # how many search results to pull full detail for
 SEARCH_PAGE_SIZE = 200
 BUY_IT_NOW_FILTER = "buyingOptions:{FIXED_PRICE}"
@@ -277,6 +278,50 @@ def extract_seller_id(seller: dict) -> str | None:
     return None
 
 
+def _normalize_stat_value(value):
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("%"):
+        text = text[:-1].strip()
+    if re.fullmatch(r"\d+", text):
+        return int(text)
+    if re.fullmatch(r"\d+\.\d+", text):
+        return float(text)
+    return text
+
+
+def map_seller(raw: dict) -> dict | None:
+    seller = raw.get("seller") or {}
+    if not seller:
+        return None
+
+    seller_id = extract_seller_id(seller)
+    username = seller.get("username") or seller_id
+
+    return {
+        "source": "ebay",
+        "seller_id": seller_id,
+        "username": username,
+        "rating": _normalize_stat_value(
+            seller.get("feedbackPercentage")
+            or seller.get("positiveFeedbackPercent")
+            or seller.get("sellerRating")
+        ),
+        "items_sold": _normalize_stat_value(
+            seller.get("feedbackScore")
+            or seller.get("itemsSold")
+            or seller.get("soldItems")
+            or seller.get("positiveFeedbackCount")
+        ),
+    }
+
+
 def map_item(raw: dict) -> dict:
     aspects = raw.get("localizedAspects", [])
     leaf_category_id, leaf_category_name = get_leaf_category(raw)
@@ -346,8 +391,11 @@ def run(query: str):
     print(f"Found {len(summaries)} results, pulling full detail for each...")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(SELLER_OUTPUT_DIR, exist_ok=True)
 
     written = 0
+    seller_written = 0
+    seen_sellers = set()
     for i, summary in enumerate(summaries, 1):
         item_id = summary.get("itemId")
         if not item_id:
@@ -368,11 +416,24 @@ def run(query: str):
 
             written += 1
             print(f"  [{i}/{len(summaries)}] wrote {filepath}")
+
+            seller = map_seller(raw)
+            seller_key = seller.get("seller_id") if seller else None
+            if seller and not seller_key:
+                seller_key = seller.get("username")
+            if seller and seller_key and seller_key not in seen_sellers:
+                seen_sellers.add(seller_key)
+                seller_path = os.path.join(SELLER_OUTPUT_DIR, f"{seller_key}.json")
+                with open(seller_path, "w", encoding="utf-8") as f:
+                    json.dump(seller, f, indent=2, ensure_ascii=False)
+                seller_written += 1
+                print(f"    wrote seller {seller_path}")
         except Exception as e:
             print(f"  [{i}/{len(summaries)}] FAILED {item_id}: {e}")
         time.sleep(0.1)  # light pacing, be polite to the API
 
     print(f"\nWrote {written} listing files to ./{OUTPUT_DIR}/")
+    print(f"Wrote {seller_written} seller files to ./{SELLER_OUTPUT_DIR}/")
 
 
 if __name__ == "__main__":

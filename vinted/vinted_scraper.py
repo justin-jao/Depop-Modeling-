@@ -12,6 +12,7 @@ from typing import Any, Optional
 MAX_LISTINGS = 5
 PROJECT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_DIR / "results"
+SELLER_OUTPUT_DIR = PROJECT_DIR / "sellers"
 VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
 VENV_DIR = PROJECT_DIR / "venv"
 RUN_SCRIPT = PROJECT_DIR / "run.sh"
@@ -150,10 +151,55 @@ def _price_and_currency(item: dict) -> tuple[Optional[str], Optional[str]]:
     return amount_text, currency_text
 
 
+def _normalize_stat_value(value: Any) -> Any:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("%"):
+        text = text[:-1].strip()
+    if re.fullmatch(r"\d+", text):
+        return int(text)
+    if re.fullmatch(r"\d+\.\d+", text):
+        return float(text)
+    return text
+
+
+def _seller_metrics(user: dict) -> tuple[Any, Any]:
+    rating = _first_non_empty(
+        user.get("rating"),
+        user.get("score"),
+        user.get("average_rating"),
+        user.get("reviews_rating"),
+        _get(user, "stats", "rating"),
+        _get(user, "feedback", "rating"),
+    )
+    items_sold = _first_non_empty(
+        user.get("items_sold"),
+        user.get("sold_items"),
+        user.get("sales_count"),
+        user.get("completed_sales"),
+        _get(user, "stats", "sales"),
+        _get(user, "statistics", "sold"),
+        _get(user, "feedback", "sales"),
+    )
+    return _normalize_stat_value(rating), _normalize_stat_value(items_sold)
+
+
+def _dom_seller_metrics(dom_meta: dict) -> tuple[Any, Any]:
+    if not isinstance(dom_meta, dict):
+        return None, None
+    return _normalize_stat_value(dom_meta.get("sellerRating")), _normalize_stat_value(dom_meta.get("sellerVolume"))
+
+
 async def _extract_dom_metadata(page) -> dict:
     return await page.evaluate(
         """() => {
-            const out = { uploadedText: null, category: null, location: null, desc: null };
+            const out = { uploadedText: null, category: null, location: null, desc: null, sellerRating: null, sellerVolume: null };
 
             const uploadNode = document.querySelector('[itemprop="upload_date"]');
             if (uploadNode && uploadNode.textContent) {
@@ -207,6 +253,20 @@ async def _extract_dom_metadata(page) -> dict:
                 }
             }
 
+            const ratingLabels = Array.from(document.querySelectorAll('.web_ui__Rating__label span'));
+            for (const labelNode of ratingLabels) {
+                const labelText = labelNode && labelNode.textContent ? labelNode.textContent.trim() : null;
+                const container = labelNode && labelNode.closest('div') ? labelNode.closest('div').parentElement : null;
+                const fullStars = container ? container.querySelectorAll('div[class*="web_ui__Rating__full"]').length : 0;
+                const halfStars = container ? container.querySelectorAll('div[class*="web_ui__Rating__half"]').length : 0;
+
+                if (labelText && (fullStars || halfStars || /^\\d+$/.test(labelText))) {
+                    out.sellerRating = fullStars + (halfStars * 0.5);
+                    out.sellerVolume = labelText;
+                    break;
+                }
+            }
+
             return out;
         }"""
     )
@@ -250,6 +310,8 @@ def _build_record(
 
     user = _get(item, "user", default={}) if isinstance(_get(item, "user", default={}), dict) else {}
     category = _first_non_empty(item.get("catalog_title"), _get(item, "catalog", "title"), dom_meta.get("category"))
+    user_rating, user_items_sold = _seller_metrics(user)
+    dom_rating, dom_items_sold = _dom_seller_metrics(dom_meta)
 
     location = _first_non_empty(
         item.get("location"),
@@ -266,6 +328,8 @@ def _build_record(
         created_at = _relative_age_to_iso(dom_meta.get("uploadedText"))
 
     listing_id = _first_non_empty(item.get("id"), _get(item, "item", "id"))
+    seller_rating = _first_non_empty(user_rating, dom_rating)
+    seller_items_sold = _first_non_empty(user_items_sold, dom_items_sold)
 
     return {
         "listing_id": str(listing_id) if listing_id is not None else None,
@@ -281,11 +345,32 @@ def _build_record(
         "created_at": created_at,
         "seller_id": str(user.get("id")) if user.get("id") is not None else None,
         "username": _first_non_empty(user.get("login"), user.get("username"), user.get("slug")),
+        "seller_rating": seller_rating,
+        "seller_items_sold": seller_items_sold,
         "category": category,
         "location": location,
         "image_url": _first_non_empty(_get(item, "photo", "url"), _get(item, "photo", "full_size_url")),
         "scraped_at": _now_iso(),
         "search_query": query,
+    }
+
+
+def _build_seller_record(item: dict, dom_meta: dict) -> Optional[dict]:
+    user = _get(item, "user", default={}) if isinstance(_get(item, "user", default={}), dict) else {}
+    if not user:
+        return None
+
+    user_rating, user_items_sold = _seller_metrics(user)
+    dom_rating, dom_items_sold = _dom_seller_metrics(dom_meta)
+    seller_id = user.get("id")
+    username = _first_non_empty(user.get("login"), user.get("username"), user.get("slug"))
+
+    return {
+        "source": "vinted",
+        "seller_id": str(seller_id) if seller_id is not None else None,
+        "username": username,
+        "rating": _first_non_empty(user_rating, dom_rating),
+        "items_sold": _first_non_empty(user_items_sold, dom_items_sold),
     }
 
 
@@ -320,8 +405,11 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
         return
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+    SELLER_OUTPUT_DIR.mkdir(exist_ok=True)
 
     saved = 0
+    seller_saved = 0
+    seen_sellers = set()
     for summary in items[:MAX_LISTINGS]:
         if not isinstance(summary, dict):
             continue
@@ -373,10 +461,21 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
         out_file = OUTPUT_DIR / f"listing_{item_id}.json"
         out_file.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
 
+        seller_record = _build_seller_record(summary, dom_meta if isinstance(dom_meta, dict) else {})
+        seller_key = None
+        if seller_record:
+            seller_key = seller_record.get("seller_id") or seller_record.get("username")
+        if seller_record and seller_key and seller_key not in seen_sellers:
+            seen_sellers.add(seller_key)
+            seller_file = SELLER_OUTPUT_DIR / f"seller_{seller_key}.json"
+            seller_file.write_text(json.dumps(seller_record, indent=2, ensure_ascii=False), encoding="utf-8")
+            seller_saved += 1
+
         saved += 1
         context.log.info(f"Saved {out_file.name}")
 
     context.log.info(f"Done - saved {saved} listing(s) to '{OUTPUT_DIR}/'")
+    context.log.info(f"Done - saved {seller_saved} seller(s) to '{SELLER_OUTPUT_DIR}/'")
 
 
 async def main() -> None:

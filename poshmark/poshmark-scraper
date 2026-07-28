@@ -16,6 +16,7 @@ DETAIL_CONCURRENCY = 3
 
 PROJECT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_DIR.parent / "poshmark_results"
+SELLER_OUTPUT_DIR = PROJECT_DIR.parent / "poshmark_sellers"
 VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
 VENV_DIR = PROJECT_DIR / "venv"
 RUN_SCRIPT = PROJECT_DIR / "run.sh"
@@ -480,6 +481,88 @@ def _extract_labeled_value(text: str, label: str) -> Optional[str]:
     return match.group(1).strip() if match else None
 
 
+def _extract_poshmark_seller_blob(state: dict, item_blob: dict) -> dict:
+    candidates = []
+
+    listing_details = state.get("$_listing_details") if isinstance(state.get("$_listing_details"), dict) else {}
+    closet_state = state.get("$_closet") if isinstance(state.get("$_closet"), dict) else {}
+
+    if isinstance(listing_details, dict):
+        candidates.extend(
+            [
+                listing_details.get("listerData"),
+                listing_details.get("listingDetails"),
+                listing_details.get("seller"),
+            ]
+        )
+
+    if isinstance(closet_state, dict):
+        candidates.extend(
+            [
+                closet_state.get("closetUserInfo", {}).get("data") if isinstance(closet_state.get("closetUserInfo"), dict) else None,
+                closet_state.get("user"),
+                closet_state.get("seller"),
+            ]
+        )
+
+    if isinstance(item_blob.get("seller"), dict):
+        candidates.append(item_blob.get("seller"))
+    if isinstance(item_blob.get("user"), dict):
+        candidates.append(item_blob.get("user"))
+
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+
+    return {}
+
+
+def _extract_poshmark_items_sold(state: dict, item_blob: dict, body_text: str) -> Optional[int]:
+    seller_blob = _extract_poshmark_seller_blob(state, item_blob)
+    for key in (
+        "items_sold",
+        "itemsSold",
+        "sold_count",
+        "soldCount",
+        "sales_count",
+        "salesCount",
+        "num_sales",
+        "numSales",
+        "sold_items",
+        "soldItems",
+        "total_sales",
+        "totalSold",
+    ):
+        value = seller_blob.get(key)
+        if value not in (None, "", [], {}):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                text = str(value).strip()
+                if text.isdigit():
+                    return int(text)
+
+    for key in ("items_sold", "itemsSold", "sold_count", "sales_count", "total_sales"):
+        value = _find_first_value(state, (key,))
+        if value not in (None, "", [], {}):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                text = str(value).strip()
+                if text.isdigit():
+                    return int(text)
+
+    if isinstance(body_text, str) and body_text:
+        match = re.search(r"\b(\d+)\s+(?:items?\s+)?sold\b", body_text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        match = re.search(r"\bsold\s+(\d+)\b", body_text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+
+    return None
+
+
 def map_item(
     *,
     listing_url: str,
@@ -498,6 +581,7 @@ def map_item(
     body_text = dom_hints.get("bodyText") if isinstance(dom_hints.get("bodyText"), str) else ""
     details_text = dom_hints.get("detailsText") if isinstance(dom_hints.get("detailsText"), str) else ""
     internal_seller_id = _extract_internal_seller_id(next_data)
+    seller_blob = _extract_poshmark_seller_blob(next_data, item_blob)
 
     listing_id = _first_non_empty(
         listing_id,
@@ -583,6 +667,9 @@ def map_item(
         item_blob.get("username"),
         item_blob.get("seller_username"),
         (item_blob.get("seller") or {}).get("username") if isinstance(item_blob.get("seller"), dict) else None,
+        seller_blob.get("username"),
+        seller_blob.get("handle"),
+        seller_blob.get("slug"),
         _find_first_value(next_data, ("username", "seller_username", "handle")),
     )
 
@@ -603,6 +690,10 @@ def map_item(
         item_blob.get("seller_id"),
         item_blob.get("user_id"),
         (item_blob.get("seller") or {}).get("id") if isinstance(item_blob.get("seller"), dict) else None,
+        seller_blob.get("id"),
+        seller_blob.get("user_id"),
+        seller_blob.get("creator_id"),
+        seller_blob.get("closet_id"),
         _find_first_value(next_data, ("creator_id", "seller_id", "user_id", "closet_id")),
         username,
     )
@@ -659,6 +750,32 @@ def map_item(
     }
 
 
+def build_seller_record(*, next_data: dict, item_blob: dict, dom_hints: dict) -> dict:
+    body_text = dom_hints.get("bodyText") if isinstance(dom_hints.get("bodyText"), str) else ""
+    seller_blob = _extract_poshmark_seller_blob(next_data, item_blob)
+    seller_id = _first_non_empty(
+        seller_blob.get("id"),
+        seller_blob.get("user_id"),
+        seller_blob.get("creator_id"),
+        seller_blob.get("closet_id"),
+        _find_first_value(next_data, ("creator_id", "seller_id", "user_id", "closet_id")),
+    )
+    username = _first_non_empty(
+        seller_blob.get("username"),
+        seller_blob.get("handle"),
+        seller_blob.get("slug"),
+        _find_first_value(next_data, ("username", "seller_username", "handle")),
+    )
+
+    return {
+        "source": "poshmark",
+        "seller_id": str(seller_id) if seller_id is not None else None,
+        "username": username,
+        "rating": None,
+        "items_sold": _extract_poshmark_items_sold(next_data, item_blob, body_text),
+    }
+
+
 async def _collect_listing_urls(page: Page, query: str, limit: int) -> list[str]:
     search_url = f"https://poshmark.com/search?query={quote_plus(query)}&type=listings&src=dir"
     await page.goto(search_url, wait_until="domcontentloaded", timeout=SEARCH_TIMEOUT_MS)
@@ -690,6 +807,7 @@ async def _collect_listing_urls(page: Page, query: str, limit: int) -> list[str]
 
 async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
     OUTPUT_DIR.mkdir(exist_ok=True)
+    SELLER_OUTPUT_DIR.mkdir(exist_ok=True)
 
     print(f"Searching Poshmark for: {query}")
     results: list[dict] = []
@@ -706,6 +824,7 @@ async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
         print(f"Found {len(urls)} listing URL(s), pulling detail pages...")
 
         closet_location_cache: dict[str, Optional[str]] = {}
+        seen_sellers: set[str] = set()
         sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
 
         async def process_listing(idx: int, url: str) -> Optional[dict]:
@@ -747,6 +866,21 @@ async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
                         json.dumps(record, indent=2, ensure_ascii=False),
                         encoding="utf-8",
                     )
+
+                    seller_record = build_seller_record(
+                        next_data=next_data,
+                        item_blob=_find_best_item_blob(next_data, record.get("listing_id")),
+                        dom_hints=dom_hints,
+                    )
+                    seller_key = seller_record.get("seller_id") or seller_record.get("username")
+                    if seller_key and seller_key not in seen_sellers:
+                        seen_sellers.add(seller_key)
+                        seller_file = SELLER_OUTPUT_DIR / f"{seller_key}.json"
+                        seller_file.write_text(
+                            json.dumps(seller_record, indent=2, ensure_ascii=False),
+                            encoding="utf-8",
+                        )
+
                     print(f"  [{idx + 1}/{len(urls)}] wrote {out_file}")
                     return record
                 except Exception as exc:
@@ -761,6 +895,7 @@ async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
         await browser.close()
 
     print(f"\nWrote {len(results)} listing files to {OUTPUT_DIR}/")
+    print(f"Wrote {len(seen_sellers)} seller files to {SELLER_OUTPUT_DIR}/")
     return results
 
 

@@ -95,6 +95,7 @@ The launcher automatically:
 
 5. Output:
    - `results/` — one JSON file per listing plus debug artifacts for the first item.
+   - `sellers/` — one JSON file per unique seller.
    - `storage/` — Crawlee's own request queue/dataset (safe to delete/ignore).
 
 ## Notes & troubleshooting

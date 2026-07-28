@@ -51,8 +51,10 @@ python ebay_scrape.py
 ```
 
 It will prompt you for a search query, then write **one JSON file per
-listing** into an `ebay_results/` folder (created automatically),
-named after each item's ID — e.g. `ebay_results/176212861437.json`.
+listing** into an `ebay_results/` folder and **one JSON file per seller**
+into an `ebay_sellers/` folder (both created automatically).
+Listing files are named after each item's ID — e.g. `ebay_results/176212861437.json`.
+Seller files are named after the seller ID or username.
 
 Pulls 10 listings per query by default.
 
@@ -75,6 +77,18 @@ Each file in `ebay_results/` looks like:
   "category": "...",
   "location": "...",
   "url": "https://www.ebay.com/itm/..."
+}
+```
+
+Each file in `ebay_sellers/` contains:
+
+```json
+{
+  "source": "ebay",
+  "seller_id": "...",
+  "username": "...",
+  "rating": 99.8,
+  "items_sold": 1234
 }
 ```
 
