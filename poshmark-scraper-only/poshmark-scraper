@@ -1,237 +1,769 @@
 import asyncio
 import json
+import os
 import re
-from urllib.parse import quote
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+from urllib.parse import quote_plus
 
-from playwright.async_api import async_playwright
+MAX_LISTINGS = 10
+SEARCH_TIMEOUT_MS = 60000
+DETAIL_TIMEOUT_MS = 60000
+DETAIL_CONCURRENCY = 3
+
+PROJECT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = PROJECT_DIR.parent / "poshmark_results"
+VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
+VENV_DIR = PROJECT_DIR / "venv"
+RUN_SCRIPT = PROJECT_DIR / "run.sh"
+
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
 
 
-async def scrape_poshmark(query, limit=5):
-
-    search_url = (
-        f"https://poshmark.com/search?"
-        f"query={quote(query)}&type=listings&src=dir"
-    )
-
-    listings = []
-
-    async with async_playwright() as p:
-
-        browser = await p.chromium.launch(
-            headless=True
-        )
-
-        page = await browser.new_page(
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
-                " AppleWebKit/537.36 Chrome/120 Safari/537.36"
+def use_project_interpreter() -> None:
+    """Create project venv if needed, then run this script with that Python."""
+    if not VENV_PYTHON.is_file():
+        if not RUN_SCRIPT.is_file():
+            raise RuntimeError(
+                "The project virtual environment is missing and run.sh could not be found."
             )
+        os.execv(str(RUN_SCRIPT), [str(RUN_SCRIPT)])
+
+    try:
+        running_prefix = Path(sys.prefix).resolve()
+        project_prefix = VENV_DIR.resolve()
+    except OSError:
+        return
+
+    if running_prefix != project_prefix:
+        os.execv(
+            str(VENV_PYTHON),
+            [str(VENV_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]],
         )
-
-        await page.goto(
-            search_url,
-            wait_until="networkidle",
-            timeout=60000
-        )
-
-        # wait for listing cards
-        await page.wait_for_timeout(3000)
-
-
-        # Extract all links containing listings
-        links = await page.locator(
-            "a[href*='/listing/']"
-        ).evaluate_all(
-            """
-            els => els.map(e => e.href)
-            """
-        )
-
-
-        urls = list(dict.fromkeys(links))[:limit]
-
-
-        for url in urls:
-
-            listing_page = await browser.new_page()
-
-            try:
-
-                await listing_page.goto(
-                    url,
-                    wait_until="networkidle",
-                    timeout=60000
-                )
-
-                await listing_page.wait_for_timeout(2000)
-
-
-                # Grab Next.js data
-                html = await listing_page.content()
-
-
-                data_match = re.search(
-                    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
-                    html
-                )
-
-
-                listing_data = {}
-
-                if data_match:
-                    listing_data = json.loads(
-                        data_match.group(1)
-                    )
-
-
-                text = await listing_page.locator(
-                    "body"
-                ).inner_text()
-
-
-                # helpers
-                def find(pattern):
-                    match = re.search(
-                        pattern,
-                        text,
-                        re.I
-                    )
-                    return match.group(1).strip() if match else None
-
-
-                listing_id = (
-                    re.search(
-                        r"/listing/[^/]+-(\d+)",
-                        url
-                    )
-                )
-
-                listing_id = (
-                    listing_id.group(1)
-                    if listing_id
-                    else None
-                )
-
-
-                item = {
-
-                    "listing_id": listing_id,
-
-                    "name": find(
-                        r"^(.*?)\n"
-                    ),
-
-                    "condition": find(
-                        r"Condition\s+(.*?)\n"
-                    ),
-
-                    "size": find(
-                        r"Size\s+(.*?)\n"
-                    ),
-
-                    "brand": find(
-                        r"Brand\s+(.*?)\n"
-                    ),
-
-                    "price": find(
-                        r"\$(\d+(?:\.\d+)?)"
-                    ),
-
-                    "description": find(
-                        r"Description\s+(.*?)\n"
-                    ),
-
-                    "creation_time": find(
-                        r"(?:Listed|Created)\s+(.*?)\n"
-                    ),
-
-                    "seller_name": find(
-                        r"@([A-Za-z0-9_-]+)"
-                    ),
-
-                    "category": "Clothing",
-
-                    "location": find(
-                        r"Location\s+(.*?)\n"
-                    ),
-
-                    "url": url
-                }
-
-
-                listings.append(item)
-
-
-            except Exception as e:
-
-                print(
-                    f"Failed scraping {url}: {e}"
-                )
-
-            finally:
-                await listing_page.close()
-
-
-        await browser.close()
-
-
-    return listings
-
 
 
 if __name__ == "__main__":
+    use_project_interpreter()
 
 
-    query = input(
-        "Search Poshmark: "
-    )
+from playwright.async_api import Page, async_playwright
 
 
-    results = asyncio.run(
-        scrape_poshmark(query)
-    )
+def _first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return None
 
 
-    print(
-        json.dumps(
-            results,
-            indent=4
+def _walk(node: Any):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _walk(value)
+
+
+def _extract_listing_id(url: str) -> Optional[str]:
+    # Canonical Poshmark listing URLs usually end with an alphanumeric token,
+    # e.g. /listing/<slug>-6a61addfa6bb76132aadbaa9.
+    match = re.search(r"/listing/[^/]+-([A-Za-z0-9]{8,})(?:[/?#].*)?$", url)
+    if match:
+        return match.group(1)
+
+    # Legacy fallback for purely numeric URL ids.
+    numeric_match = re.search(r"/listing/[^/]+-(\d+)(?:[/?#].*)?$", url)
+    return numeric_match.group(1) if numeric_match else None
+
+
+def _score_item_candidate(obj: dict, listing_id: Optional[str]) -> int:
+    score = 0
+    if listing_id and str(obj.get("id")) == listing_id:
+        score += 6
+
+    for key in (
+        "title",
+        "description",
+        "price",
+        "brand",
+        "category",
+        "size",
+        "condition",
+        "seller",
+        "closet",
+        "cover_shot",
+        "pictures",
+    ):
+        if obj.get(key) not in (None, "", [], {}):
+            score += 1
+    return score
+
+
+def _find_best_item_blob(payload: Any, listing_id: Optional[str]) -> dict:
+    best_obj: dict = {}
+    best_score = 0
+
+    for obj in _walk(payload):
+        if not isinstance(obj, dict):
+            continue
+        score = _score_item_candidate(obj, listing_id)
+        if score > best_score:
+            best_obj = obj
+            best_score = score
+
+    return best_obj
+
+
+def _find_first_value(payload: Any, keys: tuple[str, ...]) -> Any:
+    for obj in _walk(payload):
+        if not isinstance(obj, dict):
+            continue
+        for key in keys:
+            value = obj.get(key)
+            if value not in (None, "", [], {}):
+                return value
+    return None
+
+
+def _extract_internal_seller_id(state: dict) -> Optional[str]:
+    """Prefer known internal seller ID locations from Poshmark bootstrap state."""
+    if not isinstance(state, dict):
+        return None
+
+    candidates = [
+        # Listing page bootstrap.
+        state.get("$_listing_details", {}).get("listerData", {}).get("id") if isinstance(state.get("$_listing_details"), dict) else None,
+        state.get("$_listing_details", {}).get("listingDetails", {}).get("creator_id") if isinstance(state.get("$_listing_details"), dict) else None,
+        # Closet page bootstrap.
+        state.get("$_closet", {}).get("closetUserInfo", {}).get("data", {}).get("id") if isinstance(state.get("$_closet"), dict) else None,
+    ]
+
+    for value in candidates:
+        if value not in (None, "", [], {}):
+            return str(value)
+
+    return None
+
+
+def _normalize_price(price_value: Any, currency_value: Any, fallback_text: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    amount = None
+    currency = None
+
+    if isinstance(price_value, dict):
+        amount = _first_non_empty(price_value.get("amount"), price_value.get("value"), price_value.get("price"))
+        currency = _first_non_empty(
+            price_value.get("currency"),
+            price_value.get("currency_code"),
+            currency_value,
         )
-    )
+    elif price_value not in (None, "", [], {}):
+        amount = price_value
+        currency = currency_value
+
+    if amount is None and fallback_text:
+        match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", fallback_text)
+        if match:
+            amount = match.group(1).replace(",", "")
+            currency = currency or "USD"
+
+    if amount is None:
+        return None, currency if currency else None
+
+    amount_text = str(amount).strip().replace(",", "")
+    if not amount_text:
+        return None, currency if currency else None
+
+    currency_text = str(currency).strip().upper() if currency not in (None, "", [], {}) else None
+    return amount_text, currency_text
 
 
-    import os
-
-# Create output folder
-output_folder = "poshmark_json"
-
-os.makedirs(
-    output_folder,
-    exist_ok=True
-)
-
-
-# Save each listing separately
-for listing in results:
-
-    listing_id = listing["listing_id"]
-
-    filename = f"{listing_id}.json"
-
-    filepath = os.path.join(
-        output_folder,
-        filename
-    )
-
-    with open(filepath, "w") as f:
-
-        json.dump(
-            listing,
-            f,
-            indent=4
+def _lowest_category(raw: Any) -> Optional[str]:
+    if isinstance(raw, dict):
+        # Prefer common deepest keys when category is structured.
+        raw = _first_non_empty(
+            raw.get("leaf"),
+            raw.get("sub_subcategory"),
+            raw.get("subcategory"),
+            raw.get("name"),
+            raw.get("title"),
+            raw.get("category"),
         )
 
+    if not isinstance(raw, str):
+        return None
 
-print(
-    f"Saved {len(results)} JSON files to {output_folder}/"
-)
+    text = raw.strip()
+    if not text:
+        return None
+
+    # Handle hierarchy separators used by marketplace/category strings.
+    parts = re.split(r"\s*[<>|/»]+\s*", text)
+    parts = [p.strip() for p in parts if p and p.strip()]
+    leaf = parts[-1] if parts else text
+
+    # Common cleanup for breadcrumb-like labels.
+    leaf = leaf.replace("_", " ").strip()
+    leaf = re.sub(r"^(women|women's|mens|men's|kids|home)\s+", "", leaf, flags=re.IGNORECASE)
+    leaf = re.sub(r"\s+", " ", leaf).strip()
+    return leaf or None
+
+
+def _normalize_created_at(raw_value: Any) -> Optional[str]:
+    if raw_value in (None, "", [], {}):
+        return None
+    if isinstance(raw_value, (int, float)):
+        ts = float(raw_value)
+        if ts > 1_000_000_000_000:
+            ts /= 1000.0
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+    value = str(raw_value).strip()
+    if not value:
+        return None
+    if re.fullmatch(r"\d+", value):
+        return _normalize_created_at(int(value))
+    return value
+
+
+def _relative_age_to_iso(raw: Any) -> Optional[str]:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().lower()
+    if not text:
+        return None
+
+    if text in {"just now", "now"}:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    match = re.search(
+        r"(\d+|an?|one)\s+(sec|secs|second|seconds|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|month|months|yr|year|years)\s+ago",
+        text,
+    )
+    if not match:
+        return None
+
+    qty = 1 if match.group(1) in {"a", "an", "one"} else int(match.group(1))
+    unit = match.group(2)
+    unit_seconds = {
+        "sec": 1,
+        "secs": 1,
+        "second": 1,
+        "seconds": 1,
+        "min": 60,
+        "mins": 60,
+        "minute": 60,
+        "minutes": 60,
+        "h": 3600,
+        "hr": 3600,
+        "hrs": 3600,
+        "hour": 3600,
+        "hours": 3600,
+        "d": 86400,
+        "day": 86400,
+        "days": 86400,
+        "w": 604800,
+        "wk": 604800,
+        "wks": 604800,
+        "week": 604800,
+        "weeks": 604800,
+        "mo": 2629800,
+        "month": 2629800,
+        "months": 2629800,
+        "yr": 31557600,
+        "year": 31557600,
+        "years": 31557600,
+    }
+    seconds = unit_seconds.get(unit)
+    if not seconds:
+        return None
+
+    ts = datetime.now(timezone.utc).timestamp() - qty * seconds
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _created_at_from_image_url(url: Any) -> Optional[str]:
+    if not isinstance(url, str):
+        return None
+    # Poshmark image URLs usually include /posts/YYYY/MM/DD/<listing_id>/...
+    match = re.search(r"/posts/(\d{4})/(\d{2})/(\d{2})/", url)
+    if not match:
+        return None
+    year, month, day = match.groups()
+    return f"{year}-{month}-{day}T00:00:00Z"
+
+
+def _normalize_item_condition(raw: Any) -> Optional[str]:
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+
+    if value.startswith("https://schema.org/"):
+        value = value.rsplit("/", 1)[-1]
+
+    mapping = {
+        "newcondition": "New",
+        "usedcondition": "Used",
+        "damagedcondition": "Damaged",
+        "refurbishedcondition": "Refurbished",
+        "nwt": "New",
+        "new": "New",
+        "nwot": "New",
+        "used": "Used",
+        "ug": "Used",
+        "uf": "Used",
+        "uln": "Used",
+        "good": "Used",
+        "vg": "Used",
+        "excellent": "Used",
+    }
+    canonical = mapping.get(value.lower())
+    if canonical:
+        return canonical
+
+    # Internal codes are sometimes 2-3 letters (e.g. uf/uln/ug).
+    if len(value) <= 3:
+        lower = value.lower()
+        if lower.startswith("u"):
+            return "Used"
+        if lower.startswith("n"):
+            return "New"
+
+    return re.sub(r"([a-z])([A-Z])", r"\1 \2", value)
+
+
+def _normalize_location(raw: Any) -> Optional[str]:
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+
+    placeholders = {
+        "city",
+        "state",
+        "country",
+        "city, st",
+        "city, state",
+    }
+    if value.lower() in placeholders:
+        return None
+    return value
+
+
+async def _extract_next_data(page: Page) -> dict:
+    raw = await page.evaluate(
+        """() => {
+            const node = document.querySelector('script#__NEXT_DATA__');
+            return node ? node.textContent : null;
+        }"""
+    )
+    if not isinstance(raw, str) or not raw.strip():
+        # Poshmark is often Vue-based and exposes bootstrap state here.
+        state = await page.evaluate("""() => window.__INITIAL_STATE__ || null""")
+        return state if isinstance(state, dict) else {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+
+async def _extract_structured_data(page: Page) -> dict:
+    raw_blocks = await page.locator('script[type="application/ld+json"]').all_text_contents()
+    product = {}
+    breadcrumb = {}
+
+    for raw in raw_blocks:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        values = payload if isinstance(payload, list) else [payload]
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            item_type = value.get("@type")
+            if item_type == "Product":
+                product = value
+            elif item_type == "BreadcrumbList":
+                breadcrumb = value
+
+    return {"product": product, "breadcrumb": breadcrumb}
+
+
+async def _extract_dom_hints(page: Page) -> dict:
+    return await page.evaluate(
+        """() => {
+            const result = {
+                ogTitle: null,
+                ogDescription: null,
+                ogImage: null,
+                detailsText: '',
+                bodyText: '',
+                closetHref: null,
+                breadcrumbTitles: [],
+                datetimeText: null,
+                timestampText: null,
+            };
+
+            const ogTitle = document.querySelector('meta[property="og:title"]');
+            const ogDescription = document.querySelector('meta[property="og:description"]');
+            const ogImage = document.querySelector('meta[property="og:image"]');
+            result.ogTitle = ogTitle ? ogTitle.content : null;
+            result.ogDescription = ogDescription ? ogDescription.content : null;
+            result.ogImage = ogImage ? ogImage.content : null;
+
+            const details = document.querySelector('[data-testid="product-details"]') || document.body;
+            result.detailsText = details ? (details.textContent || '') : '';
+            result.bodyText = document.body ? (document.body.innerText || '') : '';
+
+            const closetLink = document.querySelector('a[href*="/closet/"]');
+            result.closetHref = closetLink ? closetLink.getAttribute('href') : null;
+
+            result.breadcrumbTitles = Array.from(document.querySelectorAll('a[href*="/category/"]'))
+                .map((node) => (node.textContent || '').trim())
+                .filter(Boolean)
+                .slice(-4);
+
+            const timeNode = document.querySelector('time[datetime]');
+            result.datetimeText = timeNode ? timeNode.getAttribute('datetime') : null;
+
+            const tsNode = document.querySelector('.timestamp');
+            result.timestampText = tsNode ? (tsNode.textContent || '').trim() : null;
+
+            return result;
+        }"""
+    )
+
+
+async def _fetch_closet_location(page: Page, closet_href: Optional[str]) -> Optional[str]:
+    if not isinstance(closet_href, str) or not closet_href.strip():
+        return None
+
+    closet_url = closet_href if closet_href.startswith("http") else f"https://poshmark.com{closet_href}"
+    try:
+        response = await page.request.get(closet_url)
+    except Exception:
+        return None
+
+    if response.status != 200:
+        return None
+
+    body = await response.text()
+    # Typical closet pages expose location as City, ST in visible text.
+    match = re.search(r"\b([A-Z][a-zA-Z'\- ]+),\s*([A-Z]{2})\b", body)
+    if not match:
+        return None
+    city = match.group(1).strip()
+    state = match.group(2).strip()
+    if city.lower() == "city" or state.upper() == "ST":
+        return None
+    return f"{city}, {state}"
+
+
+def _extract_labeled_value(text: str, label: str) -> Optional[str]:
+    pattern = rf"{label}\s*[:\-]?\s*([^\n\r]+)"
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else None
+
+
+def map_item(
+    *,
+    listing_url: str,
+    query: str,
+    next_data: dict,
+    structured_data: dict,
+    dom_hints: dict,
+    closet_location: Optional[str],
+) -> dict:
+    listing_id = _extract_listing_id(listing_url)
+    item_blob = _find_best_item_blob(next_data, listing_id)
+
+    product = structured_data.get("product") if isinstance(structured_data.get("product"), dict) else {}
+    breadcrumb = structured_data.get("breadcrumb") if isinstance(structured_data.get("breadcrumb"), dict) else {}
+
+    body_text = dom_hints.get("bodyText") if isinstance(dom_hints.get("bodyText"), str) else ""
+    details_text = dom_hints.get("detailsText") if isinstance(dom_hints.get("detailsText"), str) else ""
+    internal_seller_id = _extract_internal_seller_id(next_data)
+
+    listing_id = _first_non_empty(
+        listing_id,
+        item_blob.get("id") if isinstance(item_blob, dict) else None,
+        _find_first_value(next_data, ("listing_id", "id")),
+    )
+
+    title = _first_non_empty(
+        item_blob.get("title"),
+        item_blob.get("name"),
+        product.get("name"),
+        dom_hints.get("ogTitle"),
+    )
+
+    desc = _first_non_empty(
+        item_blob.get("description"),
+        product.get("description"),
+        dom_hints.get("ogDescription"),
+    )
+
+    raw_price = _first_non_empty(
+        item_blob.get("price"),
+        _find_first_value(next_data, ("price", "listing_price", "original_price")),
+        product.get("offers"),
+    )
+
+    raw_currency = _first_non_empty(
+        item_blob.get("currency"),
+        item_blob.get("currency_code"),
+        _find_first_value(next_data, ("currency", "currency_code", "price_currency")),
+        (product.get("offers") or {}).get("priceCurrency") if isinstance(product.get("offers"), dict) else None,
+    )
+
+    if isinstance(raw_price, dict) and isinstance(product.get("offers"), dict):
+        raw_price = _first_non_empty(raw_price, product.get("offers"))
+
+    price, currency = _normalize_price(raw_price, raw_currency, body_text)
+
+    brand = _first_non_empty(
+        item_blob.get("brand"),
+        item_blob.get("brand_name"),
+        (item_blob.get("brand") or {}).get("name") if isinstance(item_blob.get("brand"), dict) else None,
+        (product.get("brand") or {}).get("name") if isinstance(product.get("brand"), dict) else None,
+        _extract_labeled_value(details_text, "Brand"),
+    )
+
+    size = _first_non_empty(
+        item_blob.get("size"),
+        item_blob.get("size_title"),
+        _extract_labeled_value(details_text, "Size"),
+    )
+
+    condition = _first_non_empty(
+        _normalize_item_condition(item_blob.get("condition")),
+        _normalize_item_condition((product.get("offers") or {}).get("itemCondition") if isinstance(product.get("offers"), dict) else None),
+        _extract_labeled_value(details_text, "Condition"),
+    )
+
+    image_url = _first_non_empty(
+        item_blob.get("image_url"),
+        item_blob.get("cover_shot") if isinstance(item_blob.get("cover_shot"), str) else None,
+        (item_blob.get("cover_shot") or {}).get("url") if isinstance(item_blob.get("cover_shot"), dict) else None,
+        (item_blob.get("pictures") or [{}])[0].get("url") if isinstance(item_blob.get("pictures"), list) and item_blob.get("pictures") else None,
+        product.get("image") if isinstance(product.get("image"), str) else None,
+        dom_hints.get("ogImage"),
+    )
+
+    created_at = _first_non_empty(
+        _normalize_created_at(
+            _first_non_empty(
+                item_blob.get("created_at"),
+                item_blob.get("createdAt"),
+                item_blob.get("listed_at"),
+                _find_first_value(next_data, ("created_at", "createdAt", "listed_at", "created_time")),
+                dom_hints.get("datetimeText"),
+            )
+        ),
+        _created_at_from_image_url(image_url),
+        _relative_age_to_iso(dom_hints.get("timestampText")),
+    )
+
+    username = _first_non_empty(
+        item_blob.get("username"),
+        item_blob.get("seller_username"),
+        (item_blob.get("seller") or {}).get("username") if isinstance(item_blob.get("seller"), dict) else None,
+        _find_first_value(next_data, ("username", "seller_username", "handle")),
+    )
+
+    closet_href = dom_hints.get("closetHref") if isinstance(dom_hints.get("closetHref"), str) else None
+    if not username and closet_href:
+        match = re.search(r"/closet/([^/?#]+)", closet_href)
+        if match:
+            username = match.group(1)
+
+    if not username:
+        match = re.search(r"@([A-Za-z0-9_-]+)", body_text)
+        if match:
+            username = match.group(1)
+
+    seller_id = _first_non_empty(
+        internal_seller_id,
+        item_blob.get("creator_id"),
+        item_blob.get("seller_id"),
+        item_blob.get("user_id"),
+        (item_blob.get("seller") or {}).get("id") if isinstance(item_blob.get("seller"), dict) else None,
+        _find_first_value(next_data, ("creator_id", "seller_id", "user_id", "closet_id")),
+        username,
+    )
+
+    breadcrumbs = []
+    if isinstance(breadcrumb.get("itemListElement"), list):
+        for entry in breadcrumb.get("itemListElement"):
+            if not isinstance(entry, dict):
+                continue
+            item = entry.get("item")
+            if isinstance(item, dict):
+                name = item.get("name")
+                if isinstance(name, str) and name.strip():
+                    breadcrumbs.append(name.strip())
+
+    dom_breadcrumbs = dom_hints.get("breadcrumbTitles") if isinstance(dom_hints.get("breadcrumbTitles"), list) else []
+    category = _first_non_empty(
+        product.get("category"),
+        item_blob.get("category"),
+        item_blob.get("category_name"),
+        breadcrumbs[-1] if breadcrumbs else None,
+        dom_breadcrumbs[-1] if dom_breadcrumbs else None,
+        _extract_labeled_value(details_text, "Category"),
+    )
+    category = _lowest_category(category)
+
+    location = _first_non_empty(
+        _normalize_location(item_blob.get("location")),
+        _normalize_location(_find_first_value(next_data, ("location", "city", "state", "ship_from"))),
+        _normalize_location(_extract_labeled_value(details_text, "Location")),
+        _normalize_location(_extract_labeled_value(body_text, "Ships from")),
+        _normalize_location(closet_location),
+    )
+
+    return {
+        "listing_id": str(listing_id) if listing_id is not None else None,
+        "source": "poshmark",
+        "source_url": listing_url,
+        "title": title,
+        "desc": desc,
+        "price": price,
+        "currency": currency,
+        "brand": brand,
+        "size": size,
+        "condition": condition,
+        "created_at": created_at,
+        "seller_id": str(seller_id) if seller_id is not None else None,
+        "username": username,
+        "category": category,
+        "location": location,
+        "image_url": image_url,
+        "scraped_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "search_query": query,
+    }
+
+
+async def _collect_listing_urls(page: Page, query: str, limit: int) -> list[str]:
+    search_url = f"https://poshmark.com/search?query={quote_plus(query)}&type=listings&src=dir"
+    await page.goto(search_url, wait_until="domcontentloaded", timeout=SEARCH_TIMEOUT_MS)
+    try:
+        await page.locator("a[href*='/listing/']").first.wait_for(timeout=8000)
+    except Exception:
+        pass
+
+    links = await page.locator("a[href*='/listing/']").evaluate_all(
+        """elements => elements.map((el) => el.href).filter(Boolean)"""
+    )
+
+    deduped: list[str] = []
+    seen = set()
+    for link in links:
+        if not isinstance(link, str):
+            continue
+        if "/listing/" not in link:
+            continue
+        if link in seen:
+            continue
+        seen.add(link)
+        deduped.append(link)
+        if len(deduped) >= limit:
+            break
+
+    return deduped
+
+
+async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
+    OUTPUT_DIR.mkdir(exist_ok=True)
+
+    print(f"Searching Poshmark for: {query}")
+    results: list[dict] = []
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        search_page = await browser.new_page(user_agent=USER_AGENT)
+
+        try:
+            urls = await _collect_listing_urls(search_page, query, limit)
+        finally:
+            await search_page.close()
+
+        print(f"Found {len(urls)} listing URL(s), pulling detail pages...")
+
+        closet_location_cache: dict[str, Optional[str]] = {}
+        sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
+
+        async def process_listing(idx: int, url: str) -> Optional[dict]:
+            async with sem:
+                detail_page = await browser.new_page(user_agent=USER_AGENT)
+                try:
+                    await detail_page.goto(url, wait_until="domcontentloaded", timeout=DETAIL_TIMEOUT_MS)
+                    try:
+                        await detail_page.wait_for_load_state("networkidle", timeout=5000)
+                    except Exception:
+                        pass
+
+                    next_data = await _extract_next_data(detail_page)
+                    structured_data = await _extract_structured_data(detail_page)
+                    dom_hints = await _extract_dom_hints(detail_page)
+
+                    closet_href = dom_hints.get("closetHref")
+                    closet_location = None
+                    if isinstance(closet_href, str) and closet_href.strip():
+                        cache_key = closet_href if closet_href.startswith("http") else f"https://poshmark.com{closet_href}"
+                        if cache_key in closet_location_cache:
+                            closet_location = closet_location_cache[cache_key]
+                        else:
+                            closet_location = await _fetch_closet_location(detail_page, closet_href)
+                            closet_location_cache[cache_key] = closet_location
+
+                    record = map_item(
+                        listing_url=url,
+                        query=query,
+                        next_data=next_data,
+                        structured_data=structured_data,
+                        dom_hints=dom_hints,
+                        closet_location=closet_location,
+                    )
+
+                    listing_id = record.get("listing_id") or f"idx_{idx + 1}"
+                    out_file = OUTPUT_DIR / f"{listing_id}.json"
+                    out_file.write_text(
+                        json.dumps(record, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    print(f"  [{idx + 1}/{len(urls)}] wrote {out_file}")
+                    return record
+                except Exception as exc:
+                    print(f"  [{idx + 1}/{len(urls)}] FAILED {url}: {exc}")
+                    return None
+                finally:
+                    await detail_page.close()
+
+        processed = await asyncio.gather(*(process_listing(i, url) for i, url in enumerate(urls)))
+        results.extend([item for item in processed if item is not None])
+
+        await browser.close()
+
+    print(f"\nWrote {len(results)} listing files to {OUTPUT_DIR}/")
+    return results
+
+
+if __name__ == "__main__":
+    user_query = input("Enter your Poshmark search query: ").strip()
+    asyncio.run(run(user_query))
