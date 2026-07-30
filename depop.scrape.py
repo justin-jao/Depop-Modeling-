@@ -1,4 +1,5 @@
 import asyncio
+from multiprocessing import context
 import re
 import urllib.parse
 from crawlee.crawlers import (
@@ -8,6 +9,7 @@ from crawlee.crawlers import (
 )
 from crawlee.browsers import BrowserPool, PlaywrightBrowserPlugin
 from crawlee.router import Router
+from playwright_stealth import Stealth
 
 # Initialize the Router to coordinate Stage 1 (search) and Stage 2 (products)
 router = Router[PlaywrightCrawlingContext]()
@@ -18,19 +20,21 @@ router = Router[PlaywrightCrawlingContext]()
 async def handle_search(context: PlaywrightCrawlingContext) -> None:
     context.log.info(f"Stage 1: Scanning search results at {context.request.url}")
 
-    # Wait for Depop's dynamic product grid to render in the DOM
+    # Use a partial CSS match (*=) for 'productGrid' to ignore the random hash
+    # and wait directly for a valid product link inside it
+    robust_selector = 'ol[class*="productGrid"] a[href*="/products/"]'
+
     try:
         await context.page.wait_for_selector(
-            'ol[class*="styles_productGrid__"]', timeout=10000
+            robust_selector, timeout=10000
         )
     except Exception:
         context.log.error("Product grid failed to load within timeout.")
         return
 
     # Automatically find, deduplicate, and enqueue all product links
-    # Crawlee sends these URLs to the RequestQueue with the label 'PRODUCT'
     await context.enqueue_links(
-        selector='ol[class*="styles_productGrid__"] a[href*="/products/"]',
+        selector=robust_selector,
         label="PRODUCT",
     )
     context.log.info("Successfully enqueued product links for Stage 2 processing.")
@@ -73,7 +77,7 @@ async def main() -> None:
     crawler = PlaywrightCrawler(
         request_handler=router,
         # Set headless=True when you are ready to run this silently in the background (status code 403)
-        headless=False,
+        headless=True,
         # Limit total requests during testing so it doesn't scrape thousands of items
         max_requests_per_crawl=15,
     )
@@ -82,9 +86,10 @@ async def main() -> None:
     # Registering using the Python decorator syntax so it attaches directly to the crawler instance.
     # This runs BEFORE page.goto(), guaranteeing we catch early network requests.
     @crawler.pre_navigation_hook
-    async def setup_network_interception(
-        context: PlaywrightPreNavCrawlingContext,
-    ) -> None:
+    async def setup_network_interception(context: PlaywrightPreNavCrawlingContext,) -> None:
+
+        stealth = Stealth()
+        await stealth.apply_stealth_async(context.page)
         # Only attach the listener if we are navigating to a Stage 2 product page
         if context.request.label == "PRODUCT":
 
