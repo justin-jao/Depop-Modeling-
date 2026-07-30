@@ -38,6 +38,7 @@ def transform_raw_data(db_path: str = "depop_data.db") -> None:
                 continue
 
             # Title is the slug, description is the raw description, created at is desc date. 
+            # TODO: change slug to readable title. 
             title = item.get("slug", "Untitled Listing") 
             description = item.get("description", "")
             created_at = item.get("created_at")
@@ -74,6 +75,7 @@ def transform_raw_data(db_path: str = "depop_data.db") -> None:
             """, (seller_id, f"user_{seller_id}", None, None))
 
             # 2. Upsert Listing (Deduplicated on source + listing_id)
+            #TODO: Change title 
             cursor.execute("""
                 INSERT INTO listings (
                     listing_id, source, source_url, title, description, price, currency,
