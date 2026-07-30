@@ -2,7 +2,7 @@ import sqlite3
 import pandas as pd
 
 def test_pipeline_data(db_path: str = "depop_data.db"):
-    # Connect to the database
+
     conn = sqlite3.connect(db_path)
 
     print("=== PIPELINE DATA VERIFICATION ===\n")
@@ -22,7 +22,7 @@ def test_pipeline_data(db_path: str = "depop_data.db"):
             print(df_raw[['id', 'run_id', 'source_url', 'processed', 'loaded_at']].head())
         
         print("\n" + "="*50 + "\n")
-        # Inspect the Transformation Stage (listings)
+        # Inspect the Transformation Stage (sellers)
         print("--- 2. TRANSFORM STAGE (sellers) ---")
         df_sellers = pd.read_sql_query("SELECT * FROM sellers", conn)
         
@@ -88,9 +88,9 @@ def clear_all_rows(db_path: str = "depop_data.db"):
         cursor.execute("DELETE FROM scrape_runs;")
         
         conn.commit()
-        print("✔ All rows successfully deleted. Schema remains intact.")
+        print("All rows successfully deleted. Schema remains intact.")
     except Exception as e:
-        print(f"❌ Error deleting rows: {e}")
+        print(f"Error deleting rows: {e}")
     finally:
         conn.close()
 
