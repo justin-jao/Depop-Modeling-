@@ -11,13 +11,13 @@ This project follows an ELT workflow to preserve data lineage:
 TODO: need to fix sellers table, currently no items sold or rating. 
 
 ## Testing files
-clean_db.py to wipe the JSON files and/or destroy the database  
+**clean_db.py to wipe the JSON files and/or destroy the database  
 TODO: Need to make it so I can access key_value_stores and request_queues  
 
 testing.py to test the data pipeline.  
-    test_pipeline_data(): goes through entire pipeline and checks tables  
-    clear_all_rows(): deletes all records in database  
-    reset_transform_stage(): deletes records in listing/seller table  
+**test_pipeline_data(): goes through entire pipeline and checks tables  
+**clear_all_rows(): deletes all records in database  
+**reset_transform_stage(): deletes records in listing/seller table  
 
 ## API Gateway
 Using FastAPI. currently set up in main.py.  
