@@ -16,6 +16,7 @@ router = Router[PlaywrightCrawlingContext]()
 
 
 # --- STAGE 1: Search Grid Handler ---
+# changed selector because product grid was updated, using partial match now, TEST AGAIN IN FUTURE
 @router.default_handler
 async def handle_search(context: PlaywrightCrawlingContext) -> None:
     context.log.info(f"Stage 1: Scanning search results at {context.request.url}")
@@ -88,8 +89,10 @@ async def main() -> None:
     @crawler.pre_navigation_hook
     async def setup_network_interception(context: PlaywrightPreNavCrawlingContext,) -> None:
 
+        # hides the fact that we are using a headless browser, making it less likely to be blocked by anti-bot measures
         stealth = Stealth()
         await stealth.apply_stealth_async(context.page)
+
         # Only attach the listener if we are navigating to a Stage 2 product page
         if context.request.label == "PRODUCT":
 
