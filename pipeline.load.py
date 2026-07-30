@@ -53,10 +53,10 @@ def load_crawlee_data(dataset_path: str, search_query: str, db_path: str = "depo
     print(f"Loaded {files_processed} raw files into run {run_id}.")
 
 if __name__ == "__main__":
-    # Adjust path based on where you run this relative to your Crawlee project
-    crawlee_dataset_dir = r"C:\Users\justi\OneDrive\Desktop\OMSA LEGGO\Projects\Depop\storage\datasets\default"
+    dataset_path = r"storage/datasets/default"
     
-    # example search query, need to change this later for one step ingestion
+    # TODO: example search query for scraper run metadata, 
+    # need to change this later for one step ingestion, TAKE QUERY FROM depop.scrape.py
     query = "black pants" 
     
-    load_crawlee_data(crawlee_dataset_dir, query)
+    load_crawlee_data(dataset_path, query)
