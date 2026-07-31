@@ -12,11 +12,11 @@ from typing import Any, Optional
 
 MAX_LISTINGS = 5
 PROJECT_DIR = Path(__file__).resolve().parent
-STORAGE_DIR = PROJECT_DIR.parent / "storage" / "vinted"
-OUTPUT_DIR = STORAGE_DIR / "results"
-SELLER_OUTPUT_DIR = STORAGE_DIR / "sellers"
-SCRAPE_RUNS_PATH = STORAGE_DIR / "scrape_runs.jsonl"
-RAW_LISTINGS_PATH = STORAGE_DIR / "raw_listings.jsonl"
+OUTPUT_ROOT = PROJECT_DIR / "results"
+OUTPUT_DIR = OUTPUT_ROOT / "listings"
+SELLER_OUTPUT_DIR = OUTPUT_ROOT / "sellers"
+SCRAPE_RUNS_PATH = OUTPUT_ROOT / "scrape_runs.jsonl"
+RAW_LISTINGS_PATH = OUTPUT_ROOT / "raw_listings.jsonl"
 VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
 VENV_DIR = PROJECT_DIR / "venv"
 RUN_SCRIPT = PROJECT_DIR / "run.sh"
@@ -405,7 +405,7 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
     start_time = context.request.user_data["start_time"]
     loaded_count = 0
 
-    STORAGE_DIR.mkdir(exist_ok=True)
+    OUTPUT_ROOT.mkdir(exist_ok=True)
 
     try:
         await context.page.wait_for_load_state("networkidle", timeout=15000)
@@ -564,7 +564,7 @@ async def main() -> None:
             )
         ]
     )
-    print(f"\nCrawl complete. Check the '{OUTPUT_DIR.name}/' folder for individual listing_<id>.json files.")
+    print(f"\nCrawl complete. Check the '{OUTPUT_ROOT.name}/' folder for individual listing_<id>.json files.")
 
 
 if __name__ == "__main__":

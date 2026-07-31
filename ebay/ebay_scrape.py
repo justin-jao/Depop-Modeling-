@@ -6,6 +6,8 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
 import requests
 from dotenv import load_dotenv
@@ -47,9 +49,11 @@ def _normalized_oauth_scope() -> str:
 
 OAUTH_SCOPE = _normalized_oauth_scope()
 
-OUTPUT_DIR = "storage/ebay_results"
-SELLER_OUTPUT_DIR = "storage/ebay_sellers"
-LOADING_ZONE_DIR = "storage/ebay"
+PROJECT_DIR = Path(__file__).resolve().parent
+STORAGE_ROOT = PROJECT_DIR / "storage"
+OUTPUT_DIR = str(STORAGE_ROOT / "ebay_results")
+SELLER_OUTPUT_DIR = str(STORAGE_ROOT / "ebay_sellers")
+LOADING_ZONE_DIR = str(STORAGE_ROOT / "ebay")
 SCRAPE_RUNS_PATH = os.path.join(LOADING_ZONE_DIR, "scrape_runs.jsonl")
 RAW_LISTINGS_PATH = os.path.join(LOADING_ZONE_DIR, "raw_listings.jsonl")
 RESULTS_LIMIT = 10  # how many search results to pull full detail for
@@ -158,7 +162,7 @@ def get_item_detail(token: str, item_id: str):
     return resp.json()
 
 
-def get_default_category_tree_id(token: str) -> str | None:
+def get_default_category_tree_id(token: str) -> Optional[str]:
     resp = requests.get(
         f"{TAXONOMY_BASE}/get_default_category_tree_id",
         headers=_auth_headers(token),
@@ -173,8 +177,8 @@ def get_taxonomy_category_path(
     token: str,
     category_tree_id: str,
     category_id: str,
-    cache: dict[str, str | None],
-) -> str | None:
+    cache: dict[str, Optional[str]],
+) -> Optional[str]:
     if not category_id:
         return None
     if category_id in cache:
@@ -212,7 +216,7 @@ def get_taxonomy_category_path(
         return None
 
 
-def get_leaf_category(raw: dict) -> tuple[str | None, str | None]:
+def get_leaf_category(raw: dict) -> tuple[Optional[str], Optional[str]]:
     categories = raw.get("categories") or []
     if categories:
         leaf = categories[-1] or {}
@@ -240,7 +244,7 @@ def extract_aspect(aspects, name):
     )
 
 
-def extract_size(aspects) -> str | None:
+def extract_size(aspects) -> Optional[str]:
     """Best-effort size extraction across common eBay aspect labels."""
     if not aspects:
         return None
@@ -274,7 +278,7 @@ def extract_size(aspects) -> str | None:
     return None
 
 
-def clean_description(value: str | None) -> str | None:
+def clean_description(value: Optional[str]) -> Optional[str]:
     """Convert eBay HTML-like descriptions to plain text."""
     if not isinstance(value, str) or not value.strip():
         return None
@@ -289,7 +293,7 @@ def clean_description(value: str | None) -> str | None:
     return cleaned or None
 
 
-def extract_seller_id(seller: dict) -> str | None:
+def extract_seller_id(seller: dict) -> Optional[str]:
     """Best-effort seller ID from Browse payload (often username only)."""
     if not seller:
         return None
@@ -321,7 +325,7 @@ def _normalize_stat_value(value):
     return text
 
 
-def map_seller(raw: dict) -> dict | None:
+def map_seller(raw: dict) -> Optional[dict]:
     seller = raw.get("seller") or {}
     if not seller:
         return None
@@ -356,14 +360,14 @@ def map_item(raw: dict) -> dict:
 
     seller = raw.get("seller") or {}
 
-    def _price_string(price_source: dict) -> str | None:
+    def _price_string(price_source: dict) -> Optional[str]:
         return (
             f"{price_source.get('value')} {price_source.get('currency', '')}".strip()
             if price_source.get("value")
             else None
         )
 
-    def _currency_code(price_source: dict) -> str | None:
+    def _currency_code(price_source: dict) -> Optional[str]:
         value = price_source.get("currency")
         if value is None:
             return None
