@@ -45,7 +45,7 @@ pip install -r requirements.txt
 playwright install chromium
 
 ###ELT Pipeline
-python setup_db.py
+python pipeline.setup_db.py
 python depop.scrape.py
 python pipeline.load.py
 python pipeline.transform.py
