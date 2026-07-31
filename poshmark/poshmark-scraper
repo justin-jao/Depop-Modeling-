@@ -1,12 +1,9 @@
 import asyncio
-import importlib.util
 import json
 import os
 import re
-import subprocess
 import sys
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -18,11 +15,8 @@ DETAIL_TIMEOUT_MS = 60000
 DETAIL_CONCURRENCY = 3
 
 PROJECT_DIR = Path(__file__).resolve().parent
-STORAGE_DIR = PROJECT_DIR.parent / "storage" / "poshmark"
-OUTPUT_DIR = STORAGE_DIR / "results"
-SELLER_OUTPUT_DIR = STORAGE_DIR / "sellers"
-SCRAPE_RUNS_PATH = STORAGE_DIR / "scrape_runs.jsonl"
-RAW_LISTINGS_PATH = STORAGE_DIR / "raw_listings.jsonl"
+OUTPUT_DIR = PROJECT_DIR.parent / "poshmark_results"
+SELLER_OUTPUT_DIR = PROJECT_DIR.parent / "poshmark_sellers"
 VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
 VENV_DIR = PROJECT_DIR / "venv"
 RUN_SCRIPT = PROJECT_DIR / "run.sh"
@@ -56,65 +50,11 @@ def use_project_interpreter() -> None:
         )
 
 
-def ensure_project_dependencies() -> None:
-    """Install required runtime dependencies into the project venv if missing."""
-    missing: list[str] = []
-    required = {
-        "crawlee": "crawlee[playwright]",
-        "playwright": "playwright",
-        "browserforge": "browserforge",
-    }
-
-    for module_name, package_name in required.items():
-        if importlib.util.find_spec(module_name) is None:
-            missing.append(package_name)
-
-    if not missing:
-        return
-
-    print(f"Missing dependencies detected ({', '.join(missing)}). Installing into project venv...")
-
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-        subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
-
-        if "playwright" in missing:
-            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            "Automatic dependency installation failed. "
-            "Run ./poshmark/run.sh once, then rerun the scraper."
-        ) from exc
-
-
 if __name__ == "__main__":
     use_project_interpreter()
-    ensure_project_dependencies()
 
 
-from crawlee import Request
-from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
-from playwright.async_api import Page
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _append_jsonl(path: Path, row: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, indent=2, ensure_ascii=False) + "\n")
-
-
-def _replace_nulls(value: Any) -> Any:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return {k: _replace_nulls(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_replace_nulls(item) for item in value]
-    return value
+from playwright.async_api import Page, async_playwright
 
 
 def _first_non_empty(*values: Any) -> Any:
@@ -866,28 +806,30 @@ async def _collect_listing_urls(page: Page, query: str, limit: int) -> list[str]
 
 
 async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    SELLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-    run_id = str(uuid.uuid4())
-    start_time = _utc_now_iso()
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    SELLER_OUTPUT_DIR.mkdir(exist_ok=True)
 
     print(f"Searching Poshmark for: {query}")
     results: list[dict] = []
-    seen_sellers: set[str] = set()
-    loading_zone_lock = asyncio.Lock()
 
-    async def handle_search(context: PlaywrightCrawlingContext) -> None:
-        urls = await _collect_listing_urls(context.page, query, limit)
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        search_page = await browser.new_page(user_agent=USER_AGENT)
+
+        try:
+            urls = await _collect_listing_urls(search_page, query, limit)
+        finally:
+            await search_page.close()
+
         print(f"Found {len(urls)} listing URL(s), pulling detail pages...")
 
         closet_location_cache: dict[str, Optional[str]] = {}
+        seen_sellers: set[str] = set()
         sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
 
         async def process_listing(idx: int, url: str) -> Optional[dict]:
             async with sem:
-                detail_page = await context.page.context.new_page()
+                detail_page = await browser.new_page(user_agent=USER_AGENT)
                 try:
                     await detail_page.goto(url, wait_until="domcontentloaded", timeout=DETAIL_TIMEOUT_MS)
                     try:
@@ -917,7 +859,6 @@ async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
                         dom_hints=dom_hints,
                         closet_location=closet_location,
                     )
-                    record = _replace_nulls(record)
 
                     listing_id = record.get("listing_id") or f"idx_{idx + 1}"
                     out_file = OUTPUT_DIR / f"{listing_id}.json"
@@ -931,7 +872,6 @@ async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
                         item_blob=_find_best_item_blob(next_data, record.get("listing_id")),
                         dom_hints=dom_hints,
                     )
-                    seller_record = _replace_nulls(seller_record)
                     seller_key = seller_record.get("seller_id") or seller_record.get("username")
                     if seller_key and seller_key not in seen_sellers:
                         seen_sellers.add(seller_key)
@@ -940,22 +880,6 @@ async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
                             json.dumps(seller_record, indent=2, ensure_ascii=False),
                             encoding="utf-8",
                         )
-
-                    raw_listing_row = {
-                        "id": str(uuid.uuid4()),
-                        "run_id": run_id,
-                        "source_url": url,
-                        "api_payload": {
-                            "next_data": next_data,
-                            "structured_data": structured_data,
-                            "dom_hints": dom_hints,
-                        },
-                        "loaded_at": _utc_now_iso(),
-                        "processed": False,
-                    }
-                    raw_listing_row = _replace_nulls(raw_listing_row)
-                    async with loading_zone_lock:
-                        _append_jsonl(RAW_LISTINGS_PATH, raw_listing_row)
 
                     print(f"  [{idx + 1}/{len(urls)}] wrote {out_file}")
                     return record
@@ -968,29 +892,10 @@ async def run(query: str, limit: int = MAX_LISTINGS) -> list[dict]:
         processed = await asyncio.gather(*(process_listing(i, url) for i, url in enumerate(urls)))
         results.extend([item for item in processed if item is not None])
 
-    start_url = f"https://poshmark.com/search?query={quote_plus(query)}&type=listings&src=dir"
-    crawler = PlaywrightCrawler(
-        request_handler=handle_search,
-        headless=True,
-        max_requests_per_crawl=1,
-    )
-
-    await crawler.run([Request.from_url(start_url, user_data={"query": query})])
+        await browser.close()
 
     print(f"\nWrote {len(results)} listing files to {OUTPUT_DIR}/")
     print(f"Wrote {len(seen_sellers)} seller files to {SELLER_OUTPUT_DIR}/")
-
-    scrape_run_row = {
-        "run_id": run_id,
-        "search_query": query,
-        "start_time": start_time,
-        "finish_time": _utc_now_iso(),
-        "Listing_count": len(results),
-    }
-    scrape_run_row = _replace_nulls(scrape_run_row)
-    _append_jsonl(SCRAPE_RUNS_PATH, scrape_run_row)
-
-    print(f"Updated loading-zone tables at {SCRAPE_RUNS_PATH} and {RAW_LISTINGS_PATH}")
     return results
 
 

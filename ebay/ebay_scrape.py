@@ -4,6 +4,8 @@ import json
 import os
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -47,9 +49,32 @@ OAUTH_SCOPE = _normalized_oauth_scope()
 
 OUTPUT_DIR = "storage/ebay_results"
 SELLER_OUTPUT_DIR = "storage/ebay_sellers"
+LOADING_ZONE_DIR = "storage/ebay"
+SCRAPE_RUNS_PATH = os.path.join(LOADING_ZONE_DIR, "scrape_runs.jsonl")
+RAW_LISTINGS_PATH = os.path.join(LOADING_ZONE_DIR, "raw_listings.jsonl")
 RESULTS_LIMIT = 10  # how many search results to pull full detail for
 SEARCH_PAGE_SIZE = 200
 BUY_IT_NOW_FILTER = "buyingOptions:{FIXED_PRICE}"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _append_jsonl(path: str, row: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, indent=2, ensure_ascii=False) + "\n")
+
+
+def _replace_nulls(value):
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return {k: _replace_nulls(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_replace_nulls(item) for item in value]
+    return value
 
 
 def _auth_headers(token: str) -> dict:
@@ -383,6 +408,10 @@ def map_item(raw: dict) -> dict:
 
 
 def run(query: str):
+    run_id = str(uuid.uuid4())
+    start_time = _utc_now_iso()
+    loaded_count = 0
+
     print(f"Getting OAuth token ({EBAY_ENV})...")
     token = get_app_token()
 
@@ -392,6 +421,7 @@ def run(query: str):
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(SELLER_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(LOADING_ZONE_DIR, exist_ok=True)
 
     written = 0
     seller_written = 0
@@ -428,12 +458,38 @@ def run(query: str):
                     json.dump(seller, f, indent=2, ensure_ascii=False)
                 seller_written += 1
                 print(f"    wrote seller {seller_path}")
+
+            raw_listing_row = {
+                "id": str(uuid.uuid4()),
+                "run_id": run_id,
+                "source_url": mapped.get("source_url") or raw.get("itemWebUrl"),
+                "api_payload": {
+                    "item_summary": summary,
+                    "item_detail": raw,
+                },
+                "loaded_at": _utc_now_iso(),
+                "processed": False,
+            }
+            raw_listing_row = _replace_nulls(raw_listing_row)
+            _append_jsonl(RAW_LISTINGS_PATH, raw_listing_row)
+            loaded_count += 1
         except Exception as e:
             print(f"  [{i}/{len(summaries)}] FAILED {item_id}: {e}")
         time.sleep(0.1)  # light pacing, be polite to the API
 
     print(f"\nWrote {written} listing files to ./{OUTPUT_DIR}/")
     print(f"Wrote {seller_written} seller files to ./{SELLER_OUTPUT_DIR}/")
+
+    scrape_run_row = {
+        "run_id": run_id,
+        "search_query": query,
+        "start_time": start_time,
+        "finish_time": _utc_now_iso(),
+        "Listing_count": loaded_count,
+    }
+    scrape_run_row = _replace_nulls(scrape_run_row)
+    _append_jsonl(SCRAPE_RUNS_PATH, scrape_run_row)
+    print(f"Updated loading-zone tables at {SCRAPE_RUNS_PATH} and {RAW_LISTINGS_PATH}")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
-crawlee[playwright]
+crawlee[playwright]==0.6.12
 playwright
-browserforge
+browserforge==1.2.3
+pydantic>=2.7,<2.11

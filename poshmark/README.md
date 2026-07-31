@@ -4,19 +4,17 @@ Scrapes Poshmark search results and writes one JSON file per listing plus one JS
 
 ## Setup
 
-**Fastest option**
+The scraper is self-bootstrapping. Anyone with Python 3.9+ can run it directly.
 
-From this folder, run:
+From the repository root:
 
 ```bash
-./run.sh
+python poshmark/poshmark-scraper --query "nike"
 ```
 
-The launcher will:
-- create `venv/` if needed
-- install Playwright into that environment
-- install Chromium for Playwright
-- run the scraper
+Optional flags:
+- `--limit 5` to process fewer listing URLs for a faster run
+- Omit `--query` to be prompted interactively
 
 **Manual option**
 
@@ -44,14 +42,16 @@ The launcher will:
 3. Run the scraper:
 
    ```bash
-   python poshmark-scraper
+   python poshmark-scraper --query "nike"
    ```
 
 ## Output
 
 The scraper writes:
-- `poshmark_results/` — one JSON file per listing
-- `poshmark_sellers/` — one JSON file per unique seller
+- `storage/poshmark/results/` — one JSON file per listing
+- `storage/poshmark/sellers/` — one JSON file per unique seller
+- `storage/poshmark/scrape_runs.jsonl` — loading-zone run metadata
+- `storage/poshmark/raw_listings.jsonl` — loading-zone raw payload rows
 
 Listing files include the parsed item data and seller fields. Seller files use the shared shape:
 
