@@ -1,12 +1,17 @@
+# Python virtual environments & cache
+venv/
+.venv/
+__pycache__/
+*.pyc
 
-# Local secrets
-.env
-**/.env
+# Local Database & Scraper Storage
+*.db
+storage/
+crawlee_storage/
 
-# Local secrets
+# Environment variables & secrets
 .env
-**/.env
 
-# Local secrets
-.env
-**/.env
+# OS generated files
+.DS_Store
+Thumbs.db
