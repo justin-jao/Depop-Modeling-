@@ -5,14 +5,18 @@ import re
 import sys
 import time
 import urllib.parse
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 MAX_LISTINGS = 5
 PROJECT_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = PROJECT_DIR / "results"
-SELLER_OUTPUT_DIR = PROJECT_DIR / "sellers"
+STORAGE_DIR = PROJECT_DIR.parent / "storage" / "vinted"
+OUTPUT_DIR = STORAGE_DIR / "results"
+SELLER_OUTPUT_DIR = STORAGE_DIR / "sellers"
+SCRAPE_RUNS_PATH = STORAGE_DIR / "scrape_runs.jsonl"
+RAW_LISTINGS_PATH = STORAGE_DIR / "raw_listings.jsonl"
 VENV_PYTHON = PROJECT_DIR / "venv" / "bin" / "python"
 VENV_DIR = PROJECT_DIR / "venv"
 RUN_SCRIPT = PROJECT_DIR / "run.sh"
@@ -62,6 +66,26 @@ def _get(obj: Any, *path: str, default: Any = None) -> Any:
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, indent=2, ensure_ascii=False) + "\n")
+
+
+def _replace_nulls(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return {k: _replace_nulls(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_replace_nulls(item) for item in value]
+    return value
 
 
 def _relative_age_to_iso(text: Optional[str]) -> Optional[str]:
@@ -377,6 +401,11 @@ def _build_seller_record(item: dict, dom_meta: dict) -> Optional[dict]:
 async def handle_search(context: PlaywrightCrawlingContext) -> None:
     domain = context.request.user_data["domain"]
     query = context.request.user_data["query"]
+    run_id = context.request.user_data["run_id"]
+    start_time = context.request.user_data["start_time"]
+    loaded_count = 0
+
+    STORAGE_DIR.mkdir(exist_ok=True)
 
     try:
         await context.page.wait_for_load_state("networkidle", timeout=15000)
@@ -394,93 +423,125 @@ async def handle_search(context: PlaywrightCrawlingContext) -> None:
         headers={"Accept": JSON_ACCEPT_HEADER, "Referer": context.request.url},
     )
 
-    if response.status != 200:
-        context.log.error(f"Catalog API returned HTTP {response.status}")
-        return
+    try:
+        if response.status != 200:
+            context.log.error(f"Catalog API returned HTTP {response.status}")
+            return
 
-    payload = await response.json()
-    items = payload.get("items", []) if isinstance(payload, dict) else []
-    if not isinstance(items, list) or not items:
-        context.log.warning("Catalog API returned no items.")
-        return
+        payload = await response.json()
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+        if not isinstance(items, list) or not items:
+            context.log.warning("Catalog API returned no items.")
+            return
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    SELLER_OUTPUT_DIR.mkdir(exist_ok=True)
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        SELLER_OUTPUT_DIR.mkdir(exist_ok=True)
 
-    saved = 0
-    seller_saved = 0
-    seen_sellers = set()
-    for summary in items[:MAX_LISTINGS]:
-        if not isinstance(summary, dict):
-            continue
+        saved = 0
+        seller_saved = 0
+        seen_sellers = set()
+        for summary in items[:MAX_LISTINGS]:
+            if not isinstance(summary, dict):
+                continue
 
-        item_id = summary.get("id")
-        if item_id is None:
-            continue
+            item_id = summary.get("id")
+            if item_id is None:
+                continue
 
-        item_path = summary.get("path") or summary.get("url")
-        item_page_url = (
-            item_path if isinstance(item_path, str) and item_path.startswith("http")
-            else f"https://www.{domain}{item_path}" if isinstance(item_path, str) and item_path
-            else f"https://www.{domain}/items/{item_id}"
-        )
-
-        dom_meta = {}
-        profile_location = None
-        detail_page = await context.page.context.new_page()
-        try:
-            await detail_page.goto(item_page_url, wait_until="domcontentloaded", timeout=15000)
-            try:
-                await detail_page.wait_for_load_state("networkidle", timeout=7000)
-            except Exception:
-                pass
-            dom_meta = await _extract_dom_metadata(detail_page)
-        except Exception as exc:
-            context.log.warning(f"Item {item_id}: page enrichment failed: {exc}")
-        finally:
-            await detail_page.close()
-
-        profile_url = _get(summary, "user", "profile_url")
-        if isinstance(profile_url, str) and profile_url.strip():
-            profile_location = await _fetch_profile_location(
-                context,
-                profile_url=profile_url,
-                referer_url=item_page_url,
+            item_path = summary.get("path") or summary.get("url")
+            item_page_url = (
+                item_path if isinstance(item_path, str) and item_path.startswith("http")
+                else f"https://www.{domain}{item_path}" if isinstance(item_path, str) and item_path
+                else f"https://www.{domain}/items/{item_id}"
             )
 
-        record = _build_record(
-            summary,
-            query=query,
-            domain=domain,
-            source_url=item_page_url,
-            dom_meta=dom_meta if isinstance(dom_meta, dict) else {},
-            profile_location=profile_location,
-        )
+            dom_meta = {}
+            profile_location = None
+            detail_page = await context.page.context.new_page()
+            try:
+                await detail_page.goto(item_page_url, wait_until="domcontentloaded", timeout=15000)
+                try:
+                    await detail_page.wait_for_load_state("networkidle", timeout=7000)
+                except Exception:
+                    pass
+                dom_meta = await _extract_dom_metadata(detail_page)
+            except Exception as exc:
+                context.log.warning(f"Item {item_id}: page enrichment failed: {exc}")
+            finally:
+                await detail_page.close()
 
-        await context.push_data(record)
-        out_file = OUTPUT_DIR / f"listing_{item_id}.json"
-        out_file.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+            profile_url = _get(summary, "user", "profile_url")
+            if isinstance(profile_url, str) and profile_url.strip():
+                profile_location = await _fetch_profile_location(
+                    context,
+                    profile_url=profile_url,
+                    referer_url=item_page_url,
+                )
 
-        seller_record = _build_seller_record(summary, dom_meta if isinstance(dom_meta, dict) else {})
-        seller_key = None
-        if seller_record:
-            seller_key = seller_record.get("seller_id") or seller_record.get("username")
-        if seller_record and seller_key and seller_key not in seen_sellers:
-            seen_sellers.add(seller_key)
-            seller_file = SELLER_OUTPUT_DIR / f"seller_{seller_key}.json"
-            seller_file.write_text(json.dumps(seller_record, indent=2, ensure_ascii=False), encoding="utf-8")
-            seller_saved += 1
+            record = _build_record(
+                summary,
+                query=query,
+                domain=domain,
+                source_url=item_page_url,
+                dom_meta=dom_meta if isinstance(dom_meta, dict) else {},
+                profile_location=profile_location,
+            )
+            record = _replace_nulls(record)
 
-        saved += 1
-        context.log.info(f"Saved {out_file.name}")
+            await context.push_data(record)
+            out_file = OUTPUT_DIR / f"listing_{item_id}.json"
+            out_file.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    context.log.info(f"Done - saved {saved} listing(s) to '{OUTPUT_DIR}/'")
-    context.log.info(f"Done - saved {seller_saved} seller(s) to '{SELLER_OUTPUT_DIR}/'")
+            seller_record = _build_seller_record(summary, dom_meta if isinstance(dom_meta, dict) else {})
+            seller_key = None
+            if seller_record:
+                seller_record = _replace_nulls(seller_record)
+                seller_key = seller_record.get("seller_id") or seller_record.get("username")
+            if seller_record and seller_key and seller_key not in seen_sellers:
+                seen_sellers.add(seller_key)
+                seller_file = SELLER_OUTPUT_DIR / f"seller_{seller_key}.json"
+                seller_file.write_text(json.dumps(seller_record, indent=2, ensure_ascii=False), encoding="utf-8")
+                seller_saved += 1
+
+            raw_listing_row = {
+                "id": str(uuid.uuid4()),
+                "run_id": run_id,
+                "source_url": item_page_url,
+                "api_payload": {
+                    "item_summary": summary,
+                    "dom_meta": dom_meta if isinstance(dom_meta, dict) else {},
+                    "profile_location": profile_location,
+                },
+                "loaded_at": _utc_now_iso(),
+                "processed": False,
+            }
+            raw_listing_row = _replace_nulls(raw_listing_row)
+            _append_jsonl(RAW_LISTINGS_PATH, raw_listing_row)
+            loaded_count += 1
+
+            saved += 1
+            context.log.info(f"Saved {out_file.name}")
+
+        context.log.info(f"Done - saved {saved} listing(s) to '{OUTPUT_DIR}/'")
+        context.log.info(f"Done - saved {seller_saved} seller(s) to '{SELLER_OUTPUT_DIR}/'")
+    finally:
+        scrape_run_row = {
+            "run_id": run_id,
+            "search_query": query,
+            "start_time": start_time,
+            "finish_time": _utc_now_iso(),
+            "Listing_count": loaded_count,
+        }
+        scrape_run_row = _replace_nulls(scrape_run_row)
+        _append_jsonl(SCRAPE_RUNS_PATH, scrape_run_row)
+        context.log.info(f"Updated loading-zone tables at {SCRAPE_RUNS_PATH} and {RAW_LISTINGS_PATH}")
 
 
 async def main() -> None:
     query = input("Enter your Vinted search query: ").strip()
     domain = "vinted.co.uk"
+    run_id = str(uuid.uuid4())
+    start_time = _utc_now_iso()
     start_url = f"https://www.{domain}/catalog?search_text={urllib.parse.quote_plus(query)}&order=newest_first"
 
     crawler = PlaywrightCrawler(
@@ -490,7 +551,19 @@ async def main() -> None:
     )
 
     print(f"\nStarting crawl for: '{query}' on {domain}...")
-    await crawler.run([Request.from_url(start_url, user_data={"domain": domain, "query": query})])
+    await crawler.run(
+        [
+            Request.from_url(
+                start_url,
+                user_data={
+                    "domain": domain,
+                    "query": query,
+                    "run_id": run_id,
+                    "start_time": start_time,
+                },
+            )
+        ]
+    )
     print(f"\nCrawl complete. Check the '{OUTPUT_DIR.name}/' folder for individual listing_<id>.json files.")
 
 

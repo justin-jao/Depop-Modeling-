@@ -45,8 +45,8 @@ def _normalized_oauth_scope() -> str:
 
 OAUTH_SCOPE = _normalized_oauth_scope()
 
-OUTPUT_DIR = "ebay_results"
-SELLER_OUTPUT_DIR = "ebay_sellers"
+OUTPUT_DIR = "storage/ebay_results"
+SELLER_OUTPUT_DIR = "storage/ebay_sellers"
 RESULTS_LIMIT = 10  # how many search results to pull full detail for
 SEARCH_PAGE_SIZE = 200
 BUY_IT_NOW_FILTER = "buyingOptions:{FIXED_PRICE}"

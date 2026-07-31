@@ -37,7 +37,7 @@ The launcher will:
 2. Install Playwright:
 
    ```bash
-   pip install playwright
+   pip install -r requirements.txt
    playwright install chromium
    ```
 
