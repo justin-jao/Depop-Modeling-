@@ -15,7 +15,7 @@ source "$VENV_DIR/bin/activate"
 
 echo "Installing dependencies..."
 pip install --upgrade pip >/dev/null
-pip install playwright >/dev/null
+pip install -r "$SCRIPT_DIR/requirements.txt" >/dev/null
 python -m playwright install chromium >/dev/null
 
 echo "Running Poshmark scraper..."
