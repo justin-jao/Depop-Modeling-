@@ -5,3 +5,4 @@ crawlee[playwright]==0.6.12
 playwright==1.60.0
 pydantic>=2.11,<2.12
 browserforge==1.2.3
+playwright-stealth==2.0.0

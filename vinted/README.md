@@ -1,113 +1,68 @@
-# Vinted Scraper (Crawlee + Playwright)
+# Vinted ELT Scraper
 
-Scrapes up to 10 listings for a search query and saves them as JSON.
+Extracts raw item payloads from Vinted and writes them in the same landing-zone
+format used by the Depop pipeline.
 
-For each listing it captures:
-- Listing ID
-- User ID
-- Brand ID
-- Brand Name
-- Listing status (on sale / reserved / closed)
-- Category
-- Seller description
-- Last edited date
-- Upload date
-- Thumbnail image URL
-- Item location (where it ships from)
-- Condition
-- Price (item price only, excluding shipping)
+## Data Pipeline Role
 
-## How it works
+1. **Extract (`vinted/vinted_scraper.py`)**
+   Crawls Vinted search results, opens item pages, intercepts JSON API
+   responses, and stores the best candidate payload.
+2. **Load (shared `pipeline.load.py`)**
+   Reads JSON files from `storage/datasets/default` into `raw_listings`.
+3. **Transform (shared `pipeline.transform.py`)**
+   Converts raw payloads into normalized records.
 
-Rather than scraping the rendered HTML, the script drives a real Chromium
-browser (via Playwright) to the Vinted search page and to each listing page,
-and **intercepts the JSON API calls that Vinted's own frontend makes** while
-those pages load:
+## Getting Started
 
-1. **Stage 1** loads the search results page and captures the response from
-   Vinted's catalog/search API to get a list of listing IDs.
-2. **Stage 2** visits each listing page and captures the response from the
-   item-detail API, which has the full record (description, dates, brand,
-   condition, etc).
+### 1. Create a virtual environment
 
-This mirrors how Vinted's site works internally, so it's more resilient to
-front-end HTML/CSS changes than a pure DOM scraper.
-
-## Setup (VS Code)
-
-### Fastest option
-
-From this folder, run:
-
+macOS / Linux:
 ```bash
-./run.sh
+python3 -m venv venv
+source venv/bin/activate
 ```
 
-The launcher automatically:
-- creates `venv/` if it does not exist
-- installs `requirements.txt`
-- installs Playwright Chromium
-- runs `main.py`
+Windows (PowerShell):
+```powershell
+python -m venv venv
+venv\Scripts\Activate.ps1
+```
 
-### Manual option
+### 2. Install dependencies
 
-1. Open this folder in VS Code.
-2. Create and activate a virtual environment:
+```bash
+pip install -r vinted/requirements.txt
+playwright install chromium
+```
 
-   **macOS / Linux**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+### 3. Run the scraper
 
-   **Windows (PowerShell)**
-   ```powershell
-   python -m venv venv
-   venv\Scripts\Activate.ps1
-   ```
+```bash
+python vinted/vinted_scraper.py --query "nike"
+```
 
-   In VS Code, once the venv exists you can also just pick it via
-   `Ctrl+Shift+P` -> "Python: Select Interpreter" -> `./venv`.
+Optional flags:
+- `--max-items 5`
+- `--domain vinted.co.uk`
+- omit `--query` to type your query interactively
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   playwright install chromium
-   ```
+## Output Shape
 
-   The requirements file pins the Crawlee/Pydantic/Browserforge combination
-   tested by this project. Do not upgrade those packages independently unless
-   you also re-test the crawler startup.
+Writes one record per scraped item under:
+- `storage/datasets/default/*.json`
 
-4. Run it:
-   ```bash
-   python main.py
-   ```
+Each record matches the Depop raw contract:
 
-   `main.py` automatically creates `venv/` through `run.sh` when needed and
-   restarts with that project's interpreter. This prevents globally installed
-   Anaconda/Python packages from causing Crawlee or Pydantic validation errors.
+```json
+{
+  "source_url": "https://www.vinted.co.uk/items/...",
+  "api_payload": { "...": "raw intercepted JSON ..." }
+}
+```
 
-   You'll be prompted for:
-   - A search query (e.g. `nike air max`)
+## Notes
 
-   The current scraper targets `vinted.co.uk` in code.
-
-5. Output:
-   - `results/` — one JSON file per listing plus debug artifacts for the first item.
-   - `sellers/` — one JSON file per unique seller.
-   - `storage/` — Crawlee's own request queue/dataset (safe to delete/ignore).
-
-## Notes & troubleshooting
-
-- **Anti-bot protection**: Vinted uses Datadome. If a run comes back with 0
-  results, set `headless=False` in `main.py` (in the `PlaywrightCrawler(...)`
-  call) and re-run so you can see whether a challenge/CAPTCHA is blocking the
-  browser, and solve it manually once.
-- **Unofficial API**: Vinted's API isn't publicly documented, and field names
-  can vary slightly by locale or change over time. `build_record()` in
-  `main.py` pulls each field defensively with fallbacks, and every record
-  also keeps the full `raw_payload` — if any extracted field comes back
-  `None`, check `raw_payload` for the real key name and adjust `build_record`.
-- **Rate limiting / ToS**: scraping Vinted may be against its Terms of
-  Service. Use reasonable delays/volumes and at your own discretion/risk.
+- Vinted uses anti-bot protection (Datadome), which may reduce capture rate.
+- If payload capture drops, adjust URL/content filters and scoring in
+  `vinted/vinted_scraper.py`.

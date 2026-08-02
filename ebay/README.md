@@ -1,96 +1,74 @@
-# eBay Listing Fetcher (script only)
+# eBay ELT Scraper
 
-Pulls listings from eBay's Browse API using your Developer keyset and
-writes them to a raw JSON file. No server, no frontend, woohoo!
+Extracts raw listing payloads from eBay Browse API and writes them in the same
+landing-zone format used by the Depop pipeline.
 
-## Setup
+## Data Pipeline Role
 
-**Easiest way — one command, no manual installs:**
+1. **Extract (`ebay/ebay_scrape.py`)**
+   Calls eBay Browse API endpoints, filters Buy It Now listings, and writes
+   raw summary/detail payloads.
+2. **Load (shared `pipeline.load.py`)**
+   Reads JSON files from `storage/datasets/default` into `raw_listings`.
+3. **Transform (shared `pipeline.transform.py`)**
+   Converts raw payloads into normalized records.
 
-Mac/Linux:
+## Getting Started
+
+### 1. Create a virtual environment
+
+macOS / Linux:
 ```bash
-chmod +x run.sh
-./run.sh
+python3 -m venv venv
+source venv/bin/activate
 ```
 
-Windows: double-click `run.bat` (or run it from Command Prompt).
+Windows (PowerShell):
+```powershell
+python -m venv venv
+venv\Scripts\Activate.ps1
+```
 
-First run will create a local `venv/` folder, install the two
-dependencies into it, and generate a `.env` file for you to fill in —
-then it'll stop and ask you to add your eBay keys. Run it again after
-that and it goes straight to scraping. Every run after that reuses the
-same `venv/`, so nothing gets reinstalled unless you delete it.
+### 2. Install dependencies
 
-**Manual way, if you prefer:**
 ```bash
-pip install -r requirements.txt
-cp .env.example .env
+pip install -r ebay/requirements.txt
 ```
 
-Edit `.env` with your eBay Developer keyset:
-```
+### 3. Configure eBay credentials
+
+Create `ebay/.env` with:
+
+```env
 EBAY_CLIENT_ID=your-client-id
 EBAY_CLIENT_SECRET=your-client-secret
 EBAY_ENV=PRODUCTION
 EBAY_MARKETPLACE_ID=EBAY_US
 ```
 
-## Run
-
-If you used `run.sh` / `run.bat` above, it already ran the script for
-you. To run it again later:
+### 4. Run the scraper
 
 ```bash
-./run.sh        # Mac/Linux
-run.bat         # Windows
+python ebay/ebay_scrape.py --query "nike"
 ```
 
-Or manually, if you set things up yourself:
-```bash
-python ebay_scrape.py
-```
+Optional flags:
+- `--limit 5`
+- omit `--query` to type your query interactively
 
-It will prompt you for a search query, then write **one JSON file per
-listing** into an `ebay_results/` folder and **one JSON file per seller**
-into an `ebay_sellers/` folder (both created automatically).
-Listing files are named after each item's ID — e.g. `ebay_results/176212861437.json`.
-Seller files are named after the seller ID or username.
+## Output Shape
 
-Pulls 10 listings per query by default.
+Writes one record per scraped listing under:
+- `storage/datasets/default/*.json`
 
-## Output shape
-
-Each file in `ebay_results/` looks like:
+Each record matches the Depop raw contract:
 
 ```json
 {
-  "item_id": "176212861437",
-  "name": "...",
-  "condition": "...",
-  "size": "...",
-  "brand": "...",
-  "price": "45.00 USD",
-  "price_note": null,
-  "description": "...",
-  "creation_time": "2026-03-14T10:22:00.000Z",
-  "seller_name": "...",
-  "category": "...",
-  "location": "...",
-  "url": "https://www.ebay.com/itm/..."
+  "source_url": "https://www.ebay.com/itm/...",
+  "api_payload": {
+    "item_summary": { "...": "raw eBay summary JSON ..." },
+    "item_detail": { "...": "raw eBay detail JSON ..." }
+  }
 }
 ```
-
-Each file in `ebay_sellers/` contains:
-
-```json
-{
-  "source": "ebay",
-  "seller_id": "...",
-  "username": "...",
-  "rating": 99.8,
-  "items_sold": 1234
-}
-```
-
-Adjust `RESULTS_LIMIT` near the top of `ebay_scrape.py` to pull more
-or fewer listings per search (default 10).

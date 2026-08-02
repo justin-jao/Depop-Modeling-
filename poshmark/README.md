@@ -1,73 +1,68 @@
-# Poshmark Scraper
+# Poshmark ELT Scraper
 
-Scrapes Poshmark search results and writes one JSON file per listing plus one JSON file per unique seller.
+Extracts raw listing payloads from Poshmark and writes them in the same
+landing-zone format used by the Depop pipeline.
 
-## Setup
+## Data Pipeline Role
 
-The scraper is self-bootstrapping. Anyone with Python 3.9+ can run it directly.
+1. **Extract (`poshmark/poshmark-scraper`)**
+   Crawls Poshmark search results, opens listing pages, intercepts JSON API
+   responses, and keeps the best listing-relevant payload.
+2. **Load (shared `pipeline.load.py`)**
+   Reads JSON files from `storage/datasets/default` and inserts them into
+   `raw_listings`.
+3. **Transform (shared `pipeline.transform.py`)**
+   Converts raw payloads into normalized tables.
 
-From the repository root:
+## Getting Started
+
+### 1. Create a virtual environment
+
+macOS / Linux:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+Windows (PowerShell):
+```powershell
+python -m venv venv
+venv\Scripts\Activate.ps1
+```
+
+### 2. Install dependencies
+
+```bash
+pip install -r poshmark/requirements.txt
+playwright install chromium
+```
+
+### 3. Run the scraper
 
 ```bash
 python poshmark/poshmark-scraper --query "nike"
 ```
 
 Optional flags:
-- `--limit 5` to process fewer listing URLs for a faster run
-- Omit `--query` to be prompted interactively
+- `--max-items 5`
+- omit `--query` to type your query interactively
 
-**Manual option**
+## Output Shape
 
-1. Create and activate a virtual environment:
+Writes one record per scraped listing under:
+- `storage/datasets/default/*.json`
 
-   **macOS / Linux**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-
-   **Windows (PowerShell)**
-   ```powershell
-   python -m venv venv
-   venv\Scripts\Activate.ps1
-   ```
-
-2. Install Playwright:
-
-   ```bash
-   pip install -r requirements.txt
-   playwright install chromium
-   ```
-
-3. Run the scraper:
-
-   ```bash
-   python poshmark-scraper --query "nike"
-   ```
-
-## Output
-
-The scraper writes:
-- `storage/poshmark/results/` — one JSON file per listing
-- `storage/poshmark/sellers/` — one JSON file per unique seller
-- `storage/poshmark/scrape_runs.jsonl` — loading-zone run metadata
-- `storage/poshmark/raw_listings.jsonl` — loading-zone raw payload rows
-
-Listing files include the parsed item data and seller fields. Seller files use the shared shape:
+Each record matches the Depop raw contract:
 
 ```json
 {
-  "source": "poshmark",
-  "seller_id": "...",
-  "username": "...",
-  "rating": null,
-  "items_sold": 123
+  "source_url": "https://poshmark.com/listing/...",
+  "api_payload": { "...": "raw intercepted JSON ..." }
 }
 ```
 
-Poshmark does not expose a seller rating in this scraper, so `rating` is always `null`.
-
 ## Notes
 
-- The scraper is best-effort and uses the current listing page, bootstrap state, and closet pages to extract data.
-- If Poshmark changes its page structure, check the raw listing output first and then adjust the extraction helpers in `poshmark-scraper`.
+- Interception quality depends on Poshmark network behavior.
+- If payload capture drops, tune the URL/content filters in
+  `poshmark/poshmark-scraper`.
