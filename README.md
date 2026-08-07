@@ -25,6 +25,10 @@ Using FastAPI. currently set up in main.py.
 http://127.0.0.1:8000/docs  
 Go here to test get/post requests, local server setup in web browser. 
 
+## Install docker! 
+This is mandatory so redis can run on Mac/Windows  
+https://www.docker.com/products/docker-desktop/
+
 ##  Getting Started
 
 ### Clone the repository and put these in terminal
@@ -44,13 +48,18 @@ source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 
+### startup redis
+#-d runs container in background, -p connects my machine to container port, 6379 is the port for redis 
+docker run -d -p 6379:6379 redis
+
+### fastAPI server
+#--reload is so the server will automatically restart every time you save changes to the file
+uvicorn main:app --reload 
+
 ###ELT Pipeline
-python pipeline.setup_db.py
+python setup_db.py
 python depop.scrape.py
 python pipeline.load.py
 python pipeline.transform.py
 python testing.py
 
-### fastAPI server
-#--reload is so the server will automatically restart every time you save changes to the file
-uvicorn main:app --reload 
